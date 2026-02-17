@@ -232,7 +232,7 @@ private fun TableScreen(
         }
         if (state.mode == TableMode.HOST && state.players.size >= 2) {
             Text(
-                "D: $dealerName | SB: $sbName | BB: $bbName | SB=${state.blindsState.config.smallBlind} BB=${state.blindsState.config.bigBlind}",
+                "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
                 fontSize = 13.sp, color = Color.Gray
             )
         }
@@ -271,9 +271,9 @@ private fun TableScreen(
             items(sortedPlayers, key = { it.id }) { player ->
                 val seatIdx = sortedPlayers.indexOf(player)
                 val roleTag = buildString {
-                    if (seatIdx == state.blindsState.dealerIndex) append("[D] ")
-                    if (seatIdx == state.blindsState.smallBlindIndex) append("[SB] ")
-                    if (seatIdx == state.blindsState.bigBlindIndex) append("[BB] ")
+                    if (seatIdx == state.blindsState.dealerIndex) append("[庄] ")
+                    if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲] ")
+                    if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲] ")
                 }
                 val cardColor = when {
                     seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)

@@ -351,7 +351,7 @@ class TableViewModel(
 
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
-                append("Hand #$nextHandCounter | D:座位${newBlinds.dealerIndex} SB:座位${newBlinds.smallBlindIndex} BB:座位${newBlinds.bigBlindIndex}")
+                append("Hand #$nextHandCounter | 庄:座位${newBlinds.dealerIndex} 小盲:座位${newBlinds.smallBlindIndex} 大盲:座位${newBlinds.bigBlindIndex}")
             }
 
             _uiState.update {
