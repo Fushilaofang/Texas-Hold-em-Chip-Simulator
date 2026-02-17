@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fushilaofang.texasholdemchipsim.blinds.BlindsConfig
+import com.fushilaofang.texasholdemchipsim.model.PlayerState
 import com.fushilaofang.texasholdemchipsim.network.DiscoveredRoom
 import com.fushilaofang.texasholdemchipsim.ui.ScreenState
 import com.fushilaofang.texasholdemchipsim.ui.TableMode
@@ -97,7 +99,6 @@ class MainActivity : ComponentActivity() {
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
-                        onContributionChange = vm::updateContribution,
                         onSubmitContribution = vm::submitMyContribution,
                         onToggleWinner = vm::toggleWinner,
                         onSettleAndAdvance = vm::settleAndAdvance,
@@ -467,7 +468,6 @@ private fun LobbyScreen(
 @Composable
 private fun GameScreen(
     state: TableUiState,
-    onContributionChange: (String, String) -> Unit,
     onSubmitContribution: (Int) -> Unit,
     onToggleWinner: (String) -> Unit,
     onSettleAndAdvance: () -> Unit,
@@ -475,170 +475,294 @@ private fun GameScreen(
     onToggleBlinds: (Boolean) -> Unit,
     getMinContribution: (String) -> Int
 ) {
+    var showLogs by remember { mutableStateOf(false) }
+    if (showLogs) {
+        LogsScreen(state = state, onBack = { showLogs = false })
+        return
+    }
+
     var myContribInput by remember { mutableStateOf("") }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
+    val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
+    val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
+    val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        // ==================== 牌桌信息栏 ====================
-        val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
-        val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
-        val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("房间：${state.tableName}", fontWeight = FontWeight.Bold)
-            Text("手数：${state.handCounter}")
+        // ========== 顶部信息栏 + 记录按钮 ==========
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
+                }
+                if (state.blindsEnabled && sortedPlayers.size >= 2) {
+                    Text(
+                        "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
+                        fontSize = 11.sp, color = Color.Gray, maxLines = 1
+                    )
+                }
+            }
+            OutlinedButton(
+                onClick = { showLogs = true },
+                modifier = Modifier.padding(start = 8.dp)
+            ) { Text("记录") }
         }
-        Text("状态：${state.info}", fontSize = 12.sp, color = Color.Gray)
 
-        if (state.blindsEnabled && state.players.size >= 2) {
-            Text(
-                "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
-                fontSize = 13.sp, color = Color.Gray
-            )
-        }
-
-        // ==================== 盲注开关（房主） ====================
+        // 房主盲注开关
         if (state.mode == TableMode.HOST) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("盲注自动轮转", fontSize = 13.sp)
-                Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(vertical = 2.dp)
+            ) {
+                Text("盲注轮转", fontSize = 12.sp)
+                Switch(
+                    checked = state.blindsEnabled,
+                    onCheckedChange = onToggleBlinds,
+                    modifier = Modifier.height(28.dp)
+                )
             }
         }
 
-        HorizontalDivider()
-
-        // ==================== 边池信息 ====================
+        // 边池信息
         if (state.lastSidePots.size > 1) {
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Text("边池详情", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Column(modifier = Modifier.padding(6.dp)) {
+                    Text("边池详情", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     state.lastSidePots.forEach { pot ->
                         val names = sortedPlayers
                             .filter { pot.eligiblePlayerIds.contains(it.id) }
                             .joinToString(", ") { it.name }
-                        Text("${pot.label}: ${pot.amount} 筹码 | 参与: $names", fontSize = 12.sp)
+                        Text("${pot.label}: ${pot.amount} | $names", fontSize = 11.sp)
                     }
                 }
-            }
-        }
-
-        // ==================== 玩家列表 ====================
-        Text("玩家与下注", fontWeight = FontWeight.Bold)
-        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(sortedPlayers, key = { it.id }) { player ->
-                val seatIdx = sortedPlayers.indexOf(player)
-                val roleTag = buildString {
-                    if (state.blindsEnabled && state.players.size >= 2) {
-                        if (seatIdx == state.blindsState.dealerIndex) append("[庄] ")
-                        if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲] ")
-                        if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲] ")
-                    }
-                }
-                val cardColor = when {
-                    state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
-                    else -> MaterialTheme.colorScheme.surface
-                }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = cardColor)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("$roleTag${player.name}", fontWeight = FontWeight.SemiBold)
-                            Text("筹码: ${player.chips}", fontWeight = FontWeight.Bold)
-                        }
-
-                        val submittedAmount = state.contributionInputs[player.id]
-                        if (!submittedAmount.isNullOrBlank()) {
-                            Text("已提交投入: $submittedAmount", fontSize = 12.sp, color = Color(0xFF388E3C))
-                        } else {
-                            Text("未提交投入", fontSize = 12.sp, color = Color.Gray)
-                        }
-
-                        if (state.blindsEnabled && state.players.size >= 2) {
-                            val minContrib = getMinContribution(player.id)
-                            if (minContrib > 0) {
-                                Text("最低投入: $minContrib | 最大: ${player.chips}", fontSize = 11.sp, color = Color(0xFFE65100))
-                            }
-                        }
-
-                        val isMe = player.id == state.selfId
-                        if (isMe) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = myContribInput,
-                                    onValueChange = { myContribInput = it },
-                                    label = { Text("我的本手投入") },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Button(onClick = {
-                                    val amount = myContribInput.toIntOrNull() ?: 0
-                                    onSubmitContribution(amount)
-                                }) { Text("提交") }
-                            }
-                        }
-
-                        if (state.mode == TableMode.HOST) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(
-                                    checked = state.selectedWinnerIds.contains(player.id),
-                                    onCheckedChange = { onToggleWinner(player.id) }
-                                )
-                                Text("赢家")
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ==================== 操作按钮 ====================
-        if (state.mode == TableMode.HOST) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onSettleAndAdvance,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                ) { Text("结算本手") }
-                OutlinedButton(onClick = onReset) { Text("清空输入") }
             }
         }
 
         Spacer(Modifier.height(4.dp))
 
-        // ==================== 记录 ====================
-        Text("最近记录", fontWeight = FontWeight.Bold)
-        LazyColumn(modifier = Modifier.weight(0.7f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(state.logs.takeLast(30).reversed(), key = { it.id }) { tx ->
-                val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
-                val pName = state.players.firstOrNull { it.id == tx.playerId }?.name ?: tx.playerId.take(6)
-                val bg = when (tx.type) {
-                    com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT -> Color(0xFFE8F5E9)
-                    com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION -> Color(0xFFFFF9C4)
-                    else -> Color.Transparent
-                }
-                Text(
-                    "[$time] ${tx.handId} $pName ${tx.note} ${tx.amount} 余额:${tx.balanceAfter}",
+        // ========== 玩家网格（自适应填满，一次显示全部） ==========
+        val playerRows = sortedPlayers.chunked(2)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            playerRows.forEach { rowPlayers ->
+                Row(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .background(bg)
-                        .padding(2.dp),
-                    fontSize = 12.sp
-                )
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    rowPlayers.forEach { player ->
+                        CompactPlayerCard(
+                            player = player,
+                            state = state,
+                            sortedPlayers = sortedPlayers,
+                            onToggleWinner = onToggleWinner,
+                            getMinContribution = getMinContribution,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                        )
+                    }
+                    if (rowPlayers.size < 2) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        // ========== 底部：我的投入操作 ==========
+        val myPlayer = sortedPlayers.firstOrNull { it.id == state.selfId }
+        if (myPlayer != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1))
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    if (state.blindsEnabled && sortedPlayers.size >= 2) {
+                        val minC = getMinContribution(myPlayer.id)
+                        if (minC > 0) {
+                            Text(
+                                "最低投入: $minC | 最大: ${myPlayer.chips}",
+                                fontSize = 11.sp, color = Color(0xFFE65100)
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = myContribInput,
+                            onValueChange = { myContribInput = it },
+                            label = { Text("我的本手投入") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Button(onClick = {
+                            val amount = myContribInput.toIntOrNull() ?: 0
+                            onSubmitContribution(amount)
+                        }) { Text("提交") }
+                    }
+                }
+            }
+        }
+
+        // ========== 底部：房主操作按钮 ==========
+        if (state.mode == TableMode.HOST) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onSettleAndAdvance,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                ) { Text("结算本手") }
+                OutlinedButton(
+                    onClick = onReset,
+                    modifier = Modifier.weight(1f)
+                ) { Text("清空输入") }
+            }
+        }
+    }
+}
+
+// ==================== 紧凑玩家卡片 ====================
+
+@Composable
+private fun CompactPlayerCard(
+    player: PlayerState,
+    state: TableUiState,
+    sortedPlayers: List<PlayerState>,
+    onToggleWinner: (String) -> Unit,
+    getMinContribution: (String) -> Int,
+    modifier: Modifier = Modifier
+) {
+    val seatIdx = sortedPlayers.indexOf(player)
+    val isMe = player.id == state.selfId
+    val roleTag = buildString {
+        if (state.blindsEnabled && state.players.size >= 2) {
+            if (seatIdx == state.blindsState.dealerIndex) append("[庄]")
+            if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲]")
+            if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲]")
+        }
+    }
+    val cardColor = when {
+        isMe -> Color(0xFFFFF8E1)
+        state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
+        else -> MaterialTheme.colorScheme.surface
+    }
+    val submittedAmount = state.contributionInputs[player.id]
+
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = cardColor)
+    ) {
+        Column(
+            modifier = Modifier.padding(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                "$roleTag${player.name}${if (isMe) "(我)" else ""}",
+                fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
+            )
+            Text("筹码: ${player.chips}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            if (!submittedAmount.isNullOrBlank()) {
+                Text("投入: $submittedAmount", fontSize = 11.sp, color = Color(0xFF388E3C))
+            } else {
+                Text("未提交", fontSize = 11.sp, color = Color.Gray)
+            }
+            if (state.blindsEnabled && state.players.size >= 2) {
+                val minContrib = getMinContribution(player.id)
+                if (minContrib > 0) {
+                    Text("最低: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
+                }
+            }
+            if (state.mode == TableMode.HOST) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = state.selectedWinnerIds.contains(player.id),
+                        onCheckedChange = { onToggleWinner(player.id) },
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text("赢家", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                }
+            }
+        }
+    }
+}
+
+// ==================== 最近记录界面 ====================
+
+@Composable
+private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
+    val sortedPlayers = state.players.sortedBy { it.seatOrder }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack) { Text("← 返回游戏") }
+            Spacer(Modifier.weight(1f))
+            Text("最近记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(72.dp))
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        if (state.logs.isEmpty()) {
+            Text(
+                "暂无记录",
+                fontSize = 14.sp, color = Color.Gray,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(state.logs.takeLast(50).reversed(), key = { it.id }) { tx ->
+                    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
+                    val pName = sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
+                        ?: tx.playerId.take(6)
+                    val bg = when (tx.type) {
+                        com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT -> Color(0xFFE8F5E9)
+                        com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION -> Color(0xFFFFF9C4)
+                        else -> Color.Transparent
+                    }
+                    Text(
+                        "[$time] ${tx.handId} $pName ${tx.note} ${tx.amount} 余额:${tx.balanceAfter}",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(bg)
+                            .padding(4.dp),
+                        fontSize = 13.sp
+                    )
+                }
             }
         }
     }
