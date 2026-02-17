@@ -2,6 +2,7 @@ package com.fushilaofang.texasholdemchipsim.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -97,6 +98,20 @@ class TableViewModel(
         context.applicationContext.getSharedPreferences("user_settings", Context.MODE_PRIVATE)
     private val sessionJson = Json { ignoreUnknownKeys = true }
 
+    /** 持有 CPU 唤醒锁，防止后台挂起导致心跳断线 */
+    private val wakeLock: PowerManager.WakeLock? =
+        (context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TexasHoldem:NetworkLock")
+            ?.apply { setReferenceCounted(false) }
+
+    private fun acquireWakeLock() {
+        try { if (wakeLock?.isHeld == false) wakeLock.acquire(4 * 60 * 60 * 1000L) } catch (_: Exception) {}
+    }
+
+    private fun releaseWakeLock() {
+        try { if (wakeLock?.isHeld == true) wakeLock.release() } catch (_: Exception) {}
+    }
+
     private val _uiState = MutableStateFlow(
         TableUiState(
             logs = repository.load().takeLast(200),
@@ -134,6 +149,7 @@ class TableViewModel(
     fun goHome() {
         // 保存会话信息以便后续重连
         saveSession()
+        releaseWakeLock()
         // 断开连接，回到首页（使用 stop/disconnect 而非 close，保留 scope 以便重连）
         roomAdvertiser.stopBroadcast()
         roomScanner.stopScan()
@@ -252,6 +268,7 @@ class TableViewModel(
         }
 
         client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, ::handleClientEvent)
+        acquireWakeLock()
     }
 
     // ==================== 盲注 ====================
@@ -599,6 +616,7 @@ class TableViewModel(
 
     /** 启动 TCP 服务端 */
     private fun startServer() {
+        acquireWakeLock()
         server.start(
             hostPlayersProvider = { _uiState.value.players },
             handCounterProvider = { _uiState.value.handCounter },
@@ -857,11 +875,13 @@ class TableViewModel(
             }
 
             client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, ::handleClientEvent)
+            acquireWakeLock()
         }
     }
 
     override fun onCleared() {
         super.onCleared()
+        releaseWakeLock()
         roomAdvertiser.close()
         roomScanner.close()
         server.close()
