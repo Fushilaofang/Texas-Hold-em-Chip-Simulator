@@ -66,6 +66,8 @@ data class TableUiState(
     val lastSidePots: List<SidePot> = emptyList(),
     // --- 掉线玩家 ---
     val disconnectedPlayerIds: Set<String> = emptySet(),
+    // --- 房主掉线弹窗（仅客户端显示） ---
+    val showHostReconnectingDialog: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -147,6 +149,7 @@ class TableViewModel(
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 disconnectedPlayerIds = emptySet(),
+                showHostReconnectingDialog = false,
                 info = "准备开始"
             )
         }
@@ -696,6 +699,7 @@ class TableViewModel(
                         blindsState = event.blindsState,
                         blindsEnabled = event.blindsEnabled,
                         gameStarted = event.gameStarted,
+                        showHostReconnectingDialog = false,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
                 }
@@ -705,16 +709,22 @@ class TableViewModel(
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Disconnected -> {
                 if (event.willReconnect) {
-                    _uiState.update { it.copy(info = "连接断开，正在尝试重连...") }
+                    _uiState.update { it.copy(
+                        showHostReconnectingDialog = true,
+                        info = "连接断开，正在尝试重连..."
+                    ) }
                 } else {
-                    _uiState.update { it.copy(info = "连接断开") }
+                    _uiState.update { it.copy(
+                        showHostReconnectingDialog = false,
+                        info = "连接断开"
+                    ) }
                 }
             }
             is LanTableClient.Event.Reconnected -> {
-                _uiState.update { it.copy(info = "重连成功") }
+                _uiState.update { it.copy(showHostReconnectingDialog = false, info = "重连成功") }
             }
             is LanTableClient.Event.ReconnectFailed -> {
-                _uiState.update { it.copy(info = event.reason) }
+                _uiState.update { it.copy(showHostReconnectingDialog = false, info = event.reason) }
             }
         }
     }
