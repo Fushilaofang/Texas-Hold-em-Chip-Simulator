@@ -112,7 +112,8 @@ class MainActivity : ComponentActivity() {
                         onReset = vm::resetTable,
                         onToggleBlinds = vm::toggleBlinds,
                         getMinContribution = vm::getMinContribution,
-                        onRemovePlayer = vm::removePlayer
+                        onRemovePlayer = vm::removePlayer,
+                        onLeave = vm::goHome
                     )
                 }
 
@@ -555,12 +556,34 @@ private fun GameScreen(
     onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     getMinContribution: (String) -> Int,
-    onRemovePlayer: (String) -> Unit
+    onRemovePlayer: (String) -> Unit,
+    onLeave: () -> Unit
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
         LogsScreen(state = state, onBack = { showLogs = false })
         return
+    }
+
+    var showMenu by remember { mutableStateOf(false) }
+    var showExitConfirm by remember { mutableStateOf(false) }
+
+    // 返回主界面确认弹窗
+    if (showExitConfirm) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showExitConfirm = false },
+            title = { Text("返回主界面", fontWeight = FontWeight.Bold) },
+            text = { Text("确定要返回主界面吗？当前牌局状态会保存，可以重新加入。") },
+            confirmButton = {
+                Button(
+                    onClick = { showExitConfirm = false; onLeave() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) { Text("确定返回") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showExitConfirm = false }) { Text("取消") }
+            }
+        )
     }
 
     var myContribInput by remember { mutableStateOf("") }
@@ -596,21 +619,44 @@ private fun GameScreen(
                 onClick = { showLogs = true },
                 modifier = Modifier.padding(start = 8.dp)
             ) { Text("记录") }
-        }
 
-        // 房主盲注开关
-        if (state.mode == TableMode.HOST) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(vertical = 2.dp)
-            ) {
-                Text("盲注轮转", fontSize = 12.sp)
-                Switch(
-                    checked = state.blindsEnabled,
-                    onCheckedChange = onToggleBlinds,
-                    modifier = Modifier.height(28.dp)
-                )
+            // 三条杠菜单按钒
+            Box {
+                OutlinedButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.padding(start = 4.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                ) { Text("≡", fontSize = 18.sp) }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    // 打开关系直接放在菜单和进入菜单项之间
+                    if (state.mode == TableMode.HOST) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("盲注轮转", modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = state.blindsEnabled,
+                                        onCheckedChange = {
+                                            onToggleBlinds(it)
+                                            showMenu = false
+                                        },
+                                        modifier = Modifier.height(28.dp)
+                                    )
+                                }
+                            },
+                            onClick = {}
+                        )
+                        HorizontalDivider()
+                    }
+                    DropdownMenuItem(
+                        text = { Text("返回主界面", color = Color(0xFFE53935)) },
+                        onClick = { showMenu = false; showExitConfirm = true }
+                    )
+                }
             }
         }
 
