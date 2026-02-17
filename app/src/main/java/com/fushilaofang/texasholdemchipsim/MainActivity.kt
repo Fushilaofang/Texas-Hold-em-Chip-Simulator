@@ -71,9 +71,8 @@ class MainActivity : ComponentActivity() {
                     onContributionChange = vm::updateContribution,
                     onSubmitContribution = vm::submitMyContribution,
                     onToggleWinner = vm::toggleWinner,
-                    onSettle = vm::settleCurrentHand,
+                    onSettleAndAdvance = vm::settleAndAdvance,
                     onReset = vm::resetTable,
-                    onStartNewHand = vm::startNewHand,
                     onToggleBlinds = vm::toggleBlinds,
                     onUpdateBlinds = vm::updateBlindsConfig,
                     onPlayerNameChange = vm::savePlayerName,
@@ -97,9 +96,8 @@ private fun TableScreen(
     onContributionChange: (String, String) -> Unit,
     onSubmitContribution: (Int) -> Unit,
     onToggleWinner: (String) -> Unit,
-    onSettle: () -> Unit,
+    onSettleAndAdvance: () -> Unit,
     onReset: () -> Unit,
-    onStartNewHand: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     onUpdateBlinds: (Int, Int) -> Unit,
     onPlayerNameChange: (String) -> Unit,
@@ -244,12 +242,6 @@ private fun TableScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("盲注自动轮转", fontSize = 13.sp)
                 Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
-
-                Spacer(Modifier.weight(1f))
-                Button(
-                    onClick = onStartNewHand,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                ) { Text("开始新一手") }
             }
         }
 
@@ -347,7 +339,10 @@ private fun TableScreen(
         // ==================== 操作按钮 ====================
         if (state.mode == TableMode.HOST) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSettle) { Text("自动结算本手") }
+                Button(
+                    onClick = onSettleAndAdvance,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                ) { Text("结算本手") }
                 OutlinedButton(onClick = onReset) { Text("清空输入") }
             }
         }

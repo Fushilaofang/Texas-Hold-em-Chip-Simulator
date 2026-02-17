@@ -262,23 +262,68 @@ class TableViewModel(
     }
 
     /**
-     * 开始新一手：自动轮转庄位、扣除盲注、生成盲注记录
+     * 结算本手并自动开始下一手：结算→轮转庄位→扣除盲注
+     * 如果是第一手（尚无人提交投入），则跳过结算直接开始。
      */
-    fun startNewHand() {
+    fun settleAndAdvance() {
         val state = _uiState.value
-        if (state.mode != TableMode.HOST) return
+        if (state.mode != TableMode.HOST) {
+            _uiState.update { it.copy(info = "仅房主可结算") }
+            return
+        }
         if (state.players.size < 2) {
             _uiState.update { it.copy(info = "至少需要2名玩家") }
             return
         }
 
-        val newBlinds = blindsManager.rotate(state.blindsState, state.players.size)
+        // ---------- 1) 结算当前手（如果有投入）----------
+        val hasContributions = state.contributionInputs.values.any { (it.toIntOrNull() ?: 0) > 0 }
+        var playersAfterSettle = state.players
+        var logsAfterSettle = state.logs
+        var settleInfo = ""
+        var sidePots: List<SidePot> = emptyList()
 
-        if (state.blindsEnabled) {
-            val sortedPlayers = state.players.sortedBy { it.seatOrder }
-            val (updatedPlayers, blindContribs) = blindsManager.deductBlinds(sortedPlayers, newBlinds)
+        if (hasContributions) {
+            if (state.selectedWinnerIds.isEmpty()) {
+                _uiState.update { it.copy(info = "请选择赢家后再结算") }
+                return
+            }
+
+            val contributions = state.players.associate { player ->
+                val raw = state.contributionInputs[player.id].orEmpty()
+                player.id to (raw.toIntOrNull() ?: 0)
+            }
 
             val handId = "HAND-${state.handCounter.toString().padStart(4, '0')}"
+            val now = System.currentTimeMillis()
+
+            val result = settlementEngine.settleHandSimple(
+                handId = handId,
+                players = state.players,
+                contributions = contributions,
+                winnerIds = state.selectedWinnerIds.toList(),
+                timestamp = now
+            )
+
+            playersAfterSettle = result.updatedPlayers
+            logsAfterSettle = (state.logs + result.transactions).takeLast(500)
+            sidePots = result.sidePots
+            settleInfo = if (result.sidePots.size > 1) {
+                result.sidePots.joinToString(" | ") { "${it.label}:${it.amount}" }
+            } else {
+                "底池 ${result.totalPot}"
+            }
+        }
+
+        // ---------- 2) 轮转庄位 + 扣盲注（下一手准备）----------
+        val nextHandCounter = if (hasContributions) state.handCounter + 1 else state.handCounter
+        val newBlinds = blindsManager.rotate(state.blindsState, playersAfterSettle.size)
+
+        if (state.blindsEnabled) {
+            val sortedPlayers = playersAfterSettle.sortedBy { it.seatOrder }
+            val (updatedPlayers, blindContribs) = blindsManager.deductBlinds(sortedPlayers, newBlinds)
+
+            val nextHandId = "HAND-${nextHandCounter.toString().padStart(4, '0')}"
             val now = System.currentTimeMillis()
             val updatedMap = updatedPlayers.associateBy { it.id }
             val blindTxs = blindContribs.map { (pid, amount) ->
@@ -289,7 +334,7 @@ class TableViewModel(
                 ChipTransaction(
                     id = UUID.randomUUID().toString(),
                     timestamp = now,
-                    handId = handId,
+                    handId = nextHandId,
                     playerId = pid,
                     amount = -amount,
                     type = TransactionType.BLIND_DEDUCTION,
@@ -299,34 +344,49 @@ class TableViewModel(
             }
 
             val prefilled = blindContribs.mapValues { (_, v) -> v.toString() }
+            val allLogs = (logsAfterSettle + blindTxs).takeLast(500)
+
+            val infoText = buildString {
+                if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
+                append("Hand #$nextHandCounter | D:座位${newBlinds.dealerIndex} SB:座位${newBlinds.smallBlindIndex} BB:座位${newBlinds.bigBlindIndex}")
+            }
 
             _uiState.update {
                 it.copy(
                     players = updatedPlayers,
+                    handCounter = nextHandCounter,
                     blindsState = newBlinds,
                     blindContributions = blindContribs,
                     contributionInputs = prefilled,
                     selectedWinnerIds = emptySet(),
-                    lastSidePots = emptyList(),
-                    logs = (it.logs + blindTxs).takeLast(500),
-                    info = "Hand #${state.handCounter} | 庄:座位${newBlinds.dealerIndex} SB:座位${newBlinds.smallBlindIndex} BB:座位${newBlinds.bigBlindIndex}"
+                    lastSidePots = sidePots,
+                    logs = allLogs,
+                    info = infoText
                 )
             }
-
-            viewModelScope.launch(Dispatchers.IO) {
-                repository.save(_uiState.value.logs)
-            }
         } else {
+            val infoText = buildString {
+                if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
+                append("Hand #$nextHandCounter | D:座位${newBlinds.dealerIndex} (无盲注)")
+            }
+
             _uiState.update {
                 it.copy(
+                    players = playersAfterSettle,
+                    handCounter = nextHandCounter,
                     blindsState = newBlinds,
                     blindContributions = emptyMap(),
                     contributionInputs = emptyMap(),
                     selectedWinnerIds = emptySet(),
-                    lastSidePots = emptyList(),
-                    info = "Hand #${state.handCounter} | 庄:座位${newBlinds.dealerIndex} (无盲注)"
+                    lastSidePots = sidePots,
+                    logs = logsAfterSettle,
+                    info = infoText
                 )
             }
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.save(_uiState.value.logs)
         }
 
         syncToClients()
@@ -380,61 +440,8 @@ class TableViewModel(
         }
     }
 
-    // ==================== 结算（支持边池） ====================
+    // ==================== 结算已整合到 settleAndAdvance ====================
 
-    fun settleCurrentHand() {
-        val state = _uiState.value
-        if (state.mode != TableMode.HOST) {
-            _uiState.update { it.copy(info = "仅主持人可结算") }
-            return
-        }
-        if (state.selectedWinnerIds.isEmpty()) {
-            _uiState.update { it.copy(info = "请选择赢家") }
-            return
-        }
-
-        val contributions = state.players.associate { player ->
-            val raw = state.contributionInputs[player.id].orEmpty()
-            player.id to (raw.toIntOrNull() ?: 0)
-        }
-
-        val handId = "HAND-${state.handCounter.toString().padStart(4, '0')}"
-        val now = System.currentTimeMillis()
-
-        val result = settlementEngine.settleHandSimple(
-            handId = handId,
-            players = state.players,
-            contributions = contributions,
-            winnerIds = state.selectedWinnerIds.toList(),
-            timestamp = now
-        )
-
-        val potDescription = if (result.sidePots.size > 1) {
-            result.sidePots.joinToString(" | ") { "${it.label}:${it.amount}" }
-        } else {
-            "底池 ${result.totalPot}"
-        }
-
-        val mergedLogs = (state.logs + result.transactions).takeLast(500)
-        _uiState.update {
-            it.copy(
-                players = result.updatedPlayers,
-                handCounter = it.handCounter + 1,
-                selectedWinnerIds = emptySet(),
-                contributionInputs = emptyMap(),
-                blindContributions = emptyMap(),
-                lastSidePots = result.sidePots,
-                logs = mergedLogs,
-                info = "$handId 结算完成 | $potDescription"
-            )
-        }
-
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.save(_uiState.value.logs)
-        }
-
-        syncToClients()
-    }
 
     // ==================== 其他 ====================
 
