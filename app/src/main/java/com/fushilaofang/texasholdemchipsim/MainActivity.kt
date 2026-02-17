@@ -455,7 +455,7 @@ private fun LobbyScreen(
                             Column {
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        "${player.name}${if (isMe) " (我)" else ""}",
+                                        "${player.name}",
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     if (isOffline) {
@@ -764,7 +764,7 @@ private fun CompactPlayerCard(
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "$roleTag${player.name}${if (isMe) "(我)" else ""}",
+                        "$roleTag${player.name}",
                         fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1,
                         modifier = Modifier.weight(1f, fill = false)
                     )
