@@ -33,6 +33,7 @@ class LanTableServer(
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
+        data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -74,11 +75,12 @@ class LanTableServer(
         }
     }
 
-    fun broadcastState(players: List<PlayerState>, handCounter: Int, transactions: List<ChipTransaction>) {
+    fun broadcastState(players: List<PlayerState>, handCounter: Int, transactions: List<ChipTransaction>, contributions: Map<String, Int> = emptyMap()) {
         val message = NetworkMessage.StateSync(
             players = players,
             handCounter = handCounter,
-            transactions = transactions.take(50)
+            transactions = transactions.take(50),
+            contributions = contributions
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -130,6 +132,10 @@ class LanTableServer(
                     val line = reader.readLine() ?: break
                     val msg = json.decodeFromString(NetworkMessage.serializer(), line)
                     when (msg) {
+                        is NetworkMessage.SubmitContribution -> {
+                            onEvent(Event.ContributionReceived(msg.playerId, msg.amount))
+                        }
+
                         is NetworkMessage.JoinRequest -> {
                             val playerId = UUID.randomUUID().toString()
                             assignedId = playerId
@@ -200,11 +206,14 @@ class LanTableClient(
         data class StateSync(
             val players: List<PlayerState>,
             val handCounter: Int,
-            val transactions: List<ChipTransaction>
+            val transactions: List<ChipTransaction>,
+            val contributions: Map<String, Int> = emptyMap()
         ) : Event()
 
         data class Error(val message: String) : Event()
     }
+
+    private var writer: BufferedWriter? = null
 
     fun connect(hostIp: String, playerName: String, buyIn: Int, onEvent: (Event) -> Unit) {
         disconnect()
@@ -214,12 +223,13 @@ class LanTableClient(
                 val newSocket = Socket(hostIp, DEFAULT_PORT)
                 socket = newSocket
                 val reader = BufferedReader(InputStreamReader(newSocket.getInputStream()))
-                val writer = BufferedWriter(OutputStreamWriter(newSocket.getOutputStream()))
+                val w = BufferedWriter(OutputStreamWriter(newSocket.getOutputStream()))
+                writer = w
 
                 val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn)
-                writer.write(json.encodeToString(NetworkMessage.serializer(), join))
-                writer.newLine()
-                writer.flush()
+                w.write(json.encodeToString(NetworkMessage.serializer(), join))
+                w.newLine()
+                w.flush()
 
                 while (isActive) {
                     val line = reader.readLine() ?: break
@@ -231,7 +241,8 @@ class LanTableClient(
                                 Event.StateSync(
                                     players = msg.players,
                                     handCounter = msg.handCounter,
-                                    transactions = msg.transactions
+                                    transactions = msg.transactions,
+                                    contributions = msg.contributions
                                 )
                             )
                         }
@@ -246,9 +257,25 @@ class LanTableClient(
         }
     }
 
+    /**
+     * 客户端提交本手投入到服务端
+     */
+    fun sendContribution(playerId: String, amount: Int) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.SubmitContribution(playerId = playerId, amount = amount)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
     fun disconnect() {
         listenJob?.cancel()
         listenJob = null
+        writer = null
         runCatching { socket?.close() }
         socket = null
     }

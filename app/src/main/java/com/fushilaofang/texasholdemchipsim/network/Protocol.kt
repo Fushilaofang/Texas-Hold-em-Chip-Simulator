@@ -25,7 +25,18 @@ sealed class NetworkMessage {
     data class StateSync(
         val players: List<PlayerState>,
         val handCounter: Int,
-        val transactions: List<ChipTransaction>
+        val transactions: List<ChipTransaction>,
+        val contributions: Map<String, Int> = emptyMap()
+    ) : NetworkMessage()
+
+    /**
+     * 玩家提交本手投入（客户端 → 服务端）
+     */
+    @Serializable
+    @SerialName("submit_contribution")
+    data class SubmitContribution(
+        val playerId: String,
+        val amount: Int
     ) : NetworkMessage()
 
     @Serializable

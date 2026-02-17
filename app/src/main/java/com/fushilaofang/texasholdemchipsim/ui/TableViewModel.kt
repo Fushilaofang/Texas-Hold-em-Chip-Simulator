@@ -182,6 +182,18 @@ class TableViewModel(
                         _uiState.update { it.copy(info = event.message) }
                     is LanTableServer.Event.PlayerDisconnected ->
                         _uiState.update { it.copy(info = "玩家离线: ${event.playerId.take(6)}") }
+                    is LanTableServer.Event.ContributionReceived -> {
+                        // 接收客户端提交的投入
+                        _uiState.update { state ->
+                            val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
+                            val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
+                            state.copy(
+                                contributionInputs = newInputs,
+                                info = "$playerName 提交投入: ${event.amount}"
+                            )
+                        }
+                        syncToClients()
+                    }
                     else -> Unit
                 }
             }
@@ -223,6 +235,7 @@ class TableViewModel(
                             players = event.players,
                             handCounter = event.handCounter,
                             logs = event.transactions.takeLast(200),
+                            contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
                             info = "牌局状态已同步"
                         )
                     }
@@ -321,9 +334,41 @@ class TableViewModel(
 
     // ==================== 投入 / 赢家 ====================
 
+    /**
+     * 本地更新投入输入框（仅用于房主直接编辑自己的投入）
+     */
     fun updateContribution(playerId: String, value: String) {
         _uiState.update {
             it.copy(contributionInputs = it.contributionInputs + (playerId to value))
+        }
+    }
+
+    /**
+     * 玩家提交自己的本手投入（房主直接更新本地，客户端发送到服务端）
+     */
+    fun submitMyContribution(amount: Int) {
+        val state = _uiState.value
+        val selfId = state.selfId
+        if (selfId.isBlank()) return
+
+        if (state.mode == TableMode.HOST) {
+            // 房主直接更新本地
+            _uiState.update {
+                it.copy(
+                    contributionInputs = it.contributionInputs + (selfId to amount.toString()),
+                    info = "已提交投入: $amount"
+                )
+            }
+            syncToClients()
+        } else if (state.mode == TableMode.CLIENT) {
+            // 客户端发送到服务端
+            client.sendContribution(selfId, amount)
+            _uiState.update {
+                it.copy(
+                    contributionInputs = it.contributionInputs + (selfId to amount.toString()),
+                    info = "已提交投入: $amount"
+                )
+            }
         }
     }
 
@@ -408,7 +453,8 @@ class TableViewModel(
     private fun syncToClients() {
         val state = _uiState.value
         if (state.mode == TableMode.HOST) {
-            server.broadcastState(state.players, state.handCounter, state.logs)
+            val contribs = state.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
+            server.broadcastState(state.players, state.handCounter, state.logs, contribs)
         }
     }
 

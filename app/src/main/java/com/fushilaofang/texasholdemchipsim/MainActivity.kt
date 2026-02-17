@@ -69,6 +69,7 @@ class MainActivity : ComponentActivity() {
                     onStartScan = vm::startRoomScan,
                     onStopScan = vm::stopRoomScan,
                     onContributionChange = vm::updateContribution,
+                    onSubmitContribution = vm::submitMyContribution,
                     onToggleWinner = vm::toggleWinner,
                     onSettle = vm::settleCurrentHand,
                     onReset = vm::resetTable,
@@ -94,6 +95,7 @@ private fun TableScreen(
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onContributionChange: (String, String) -> Unit,
+    onSubmitContribution: (Int) -> Unit,
     onToggleWinner: (String) -> Unit,
     onSettle: () -> Unit,
     onReset: () -> Unit,
@@ -112,6 +114,9 @@ private fun TableScreen(
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
     var smallBlind by remember(state.savedSmallBlind) { mutableIntStateOf(state.savedSmallBlind) }
     var bigBlind by remember(state.savedBigBlind) { mutableIntStateOf(state.savedBigBlind) }
+
+    // 本地投入输入框（只有自己的）
+    var myContribInput by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -295,25 +300,43 @@ private fun TableScreen(
                             Text("筹码: ${player.chips}", fontWeight = FontWeight.Bold)
                         }
 
-                        if (state.mode == TableMode.HOST) {
+                        // 显示该玩家已提交的投入
+                        val submittedAmount = state.contributionInputs[player.id]
+                        if (!submittedAmount.isNullOrBlank()) {
+                            Text("已提交投入: $submittedAmount", fontSize = 12.sp, color = Color(0xFF388E3C))
+                        } else {
+                            Text("未提交投入", fontSize = 12.sp, color = Color.Gray)
+                        }
+
+                        // 只有自己能编辑自己的投入
+                        val isMe = player.id == state.selfId
+                        if (isMe) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 OutlinedTextField(
-                                    value = state.contributionInputs[player.id].orEmpty(),
-                                    onValueChange = { onContributionChange(player.id, it) },
-                                    label = { Text("本手总投入") },
+                                    value = myContribInput,
+                                    onValueChange = { myContribInput = it },
+                                    label = { Text("我的本手投入") },
                                     modifier = Modifier.weight(1f)
                                 )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = state.selectedWinnerIds.contains(player.id),
-                                        onCheckedChange = { onToggleWinner(player.id) }
-                                    )
-                                    Text("赢家")
-                                }
+                                Button(onClick = {
+                                    val amount = myContribInput.toIntOrNull() ?: 0
+                                    onSubmitContribution(amount)
+                                }) { Text("提交") }
+                            }
+                        }
+
+                        // 房主可以勾选赢家
+                        if (state.mode == TableMode.HOST) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = state.selectedWinnerIds.contains(player.id),
+                                    onCheckedChange = { onToggleWinner(player.id) }
+                                )
+                                Text("赢家")
                             }
                         }
                     }
