@@ -170,6 +170,14 @@ class LanTableServer(
                         }
 
                         is NetworkMessage.JoinRequest -> {
+                            if (gameStartedProvider()) {
+                                val err = NetworkMessage.Error(reason = "游戏已开始，无法加入")
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                writer.newLine()
+                                writer.flush()
+                                socket.close()
+                                return@launch
+                            }
                             val playerId = UUID.randomUUID().toString()
                             assignedId = playerId
                             val seatOrder = hostPlayersProvider().size
