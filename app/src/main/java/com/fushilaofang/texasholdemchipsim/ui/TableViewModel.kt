@@ -238,17 +238,6 @@ class TableViewModel(
                         _uiState.update { it.copy(info = "$pName 已重连") }
                         syncToClients()
                     }
-                    is LanTableServer.Event.PlayerDropped -> {
-                        // 超时未重连，正式移除玩家
-                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                        _uiState.update { state ->
-                            state.copy(
-                                players = state.players.filter { it.id != event.playerId },
-                                info = "$pName 掉线超时，已移除"
-                            )
-                        }
-                        syncToClients()
-                    }
                     is LanTableServer.Event.ContributionReceived -> {
                         _uiState.update { state ->
                             val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
@@ -362,6 +351,23 @@ class TableViewModel(
         if (_uiState.value.mode == TableMode.HOST) {
             syncToClients()
         }
+    }
+
+    /** 房主移除指定玩家 */
+    fun removePlayer(playerId: String) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        if (playerId == state.selfId) return // 不能移除自己
+
+        val pName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
+        server.kickPlayer(playerId)
+        _uiState.update { s ->
+            s.copy(
+                players = s.players.filter { it.id != playerId },
+                info = "已移除 $pName"
+            )
+        }
+        syncToClients()
     }
 
     // ==================== 准备 / 开始游戏 ====================

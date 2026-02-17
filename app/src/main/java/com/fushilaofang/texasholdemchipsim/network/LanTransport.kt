@@ -22,7 +22,6 @@ import kotlinx.serialization.json.Json
 private const val DEFAULT_PORT = 45454
 private const val HEARTBEAT_INTERVAL_MS = 3_000L   // 每 3 秒发一次 ping
 private const val HEARTBEAT_TIMEOUT_MS = 10_000L    // 10 秒无 pong 视为掉线
-private const val DISCONNECT_GRACE_MS = 60_000L     // 掉线后保留 60 秒等待重连
 
 class LanTableServer(
     private val json: Json = Json {
@@ -43,7 +42,6 @@ class LanTableServer(
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
         data class PlayerReconnected(val playerId: String) : Event()
-        data class PlayerDropped(val playerId: String) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class Error(val message: String) : Event()
@@ -58,7 +56,6 @@ class LanTableServer(
     )
 
     private var heartbeatJob: Job? = null
-    private var graceCleanupJob: Job? = null
 
     fun start(
         hostPlayersProvider: () -> List<PlayerState>,
@@ -141,27 +138,6 @@ class LanTableServer(
             }
         }
 
-        // 清理超时的掉线玩家
-        graceCleanupJob = scope.launch {
-            while (isActive) {
-                delay(5_000L)
-                val now = System.currentTimeMillis()
-                val expired = mutableListOf<String>()
-                synchronized(disconnectedLock) {
-                    val iter = disconnectedPlayers.iterator()
-                    while (iter.hasNext()) {
-                        val (id, disconnectTime) = iter.next()
-                        if (now - disconnectTime > DISCONNECT_GRACE_MS) {
-                            iter.remove()
-                            expired.add(id)
-                        }
-                    }
-                }
-                expired.forEach { id ->
-                    onEvent(Event.PlayerDropped(id))
-                }
-            }
-        }
     }
 
     fun broadcastState(
@@ -205,11 +181,23 @@ class LanTableServer(
         }
     }
 
+    /** 房主主动踢出某个玩家，关闭其连接并从掉线列表清除 */
+    fun kickPlayer(playerId: String) {
+        synchronized(clientsLock) {
+            val conn = clients.remove(playerId)
+            conn?.let {
+                it.readerJob.cancel()
+                runCatching { it.socket.close() }
+            }
+        }
+        synchronized(disconnectedLock) {
+            disconnectedPlayers.remove(playerId)
+        }
+    }
+
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        graceCleanupJob?.cancel()
-        graceCleanupJob = null
         synchronized(disconnectedLock) { disconnectedPlayers.clear() }
         synchronized(clientsLock) {
             clients.values.forEach {

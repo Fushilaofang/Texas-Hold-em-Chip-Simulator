@@ -6,7 +6,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,6 +26,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -95,7 +100,8 @@ class MainActivity : ComponentActivity() {
                         onToggleReady = vm::toggleReady,
                         onStartGame = vm::startGame,
                         onLeave = vm::goHome,
-                        onToggleBlinds = vm::toggleBlinds
+                        onToggleBlinds = vm::toggleBlinds,
+                        onRemovePlayer = vm::removePlayer
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -104,7 +110,8 @@ class MainActivity : ComponentActivity() {
                         onSettleAndAdvance = vm::settleAndAdvance,
                         onReset = vm::resetTable,
                         onToggleBlinds = vm::toggleBlinds,
-                        getMinContribution = vm::getMinContribution
+                        getMinContribution = vm::getMinContribution,
+                        onRemovePlayer = vm::removePlayer
                     )
                 }
             }
@@ -343,13 +350,15 @@ private fun JoinRoomScreen(
 
 // ==================== 大厅等待 ====================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LobbyScreen(
     state: TableUiState,
     onToggleReady: () -> Unit,
     onStartGame: () -> Unit,
     onLeave: () -> Unit,
-    onToggleBlinds: (Boolean) -> Unit
+    onToggleBlinds: (Boolean) -> Unit,
+    onRemovePlayer: (String) -> Unit
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
@@ -397,32 +406,58 @@ private fun LobbyScreen(
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sortedPlayers, key = { it.id }) { player ->
                 val isMe = player.id == state.selfId
+                val isHost = state.mode == TableMode.HOST
+                var showMenu by remember { mutableStateOf(false) }
+
                 val cardColor = when {
                     player.isReady -> Color(0xFFE8F5E9)
                     else -> MaterialTheme.colorScheme.surface
                 }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = cardColor)
-                ) {
-                    Row(
+                Box {
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .then(
+                                if (isHost && !isMe) {
+                                    Modifier.combinedClickable(
+                                        onClick = {},
+                                        onLongClick = { showMenu = true }
+                                    )
+                                } else Modifier
+                            ),
+                        colors = CardDefaults.cardColors(containerColor = cardColor)
                     ) {
-                        Column {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    "${player.name}${if (isMe) " (我)" else ""}",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
+                            }
                             Text(
-                                "${player.name}${if (isMe) " (我)" else ""}",
-                                fontWeight = FontWeight.SemiBold
+                                if (player.isReady) "✔ 已准备" else "未准备",
+                                color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
+                                fontWeight = FontWeight.Bold
                             )
-                            Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                         }
-                        Text(
-                            if (player.isReady) "✔ 已准备" else "未准备",
-                            color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
-                            fontWeight = FontWeight.Bold
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("移除 ${player.name}", color = Color.Red) },
+                            onClick = {
+                                showMenu = false
+                                onRemovePlayer(player.id)
+                            }
                         )
                     }
                 }
@@ -473,7 +508,8 @@ private fun GameScreen(
     onSettleAndAdvance: () -> Unit,
     onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    getMinContribution: (String) -> Int
+    getMinContribution: (String) -> Int,
+    onRemovePlayer: (String) -> Unit
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
@@ -576,6 +612,7 @@ private fun GameScreen(
                             sortedPlayers = sortedPlayers,
                             onToggleWinner = onToggleWinner,
                             getMinContribution = getMinContribution,
+                            onRemovePlayer = onRemovePlayer,
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
@@ -652,6 +689,7 @@ private fun GameScreen(
 
 // ==================== 紧凑玩家卡片 ====================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CompactPlayerCard(
     player: PlayerState,
@@ -659,10 +697,14 @@ private fun CompactPlayerCard(
     sortedPlayers: List<PlayerState>,
     onToggleWinner: (String) -> Unit,
     getMinContribution: (String) -> Int,
+    onRemovePlayer: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
     val isMe = player.id == state.selfId
+    val isHost = state.mode == TableMode.HOST
+    var showMenu by remember { mutableStateOf(false) }
+
     val roleTag = buildString {
         if (state.blindsEnabled && state.players.size >= 2) {
             if (seatIdx == state.blindsState.dealerIndex) append("[庄]")
@@ -677,40 +719,63 @@ private fun CompactPlayerCard(
     }
     val submittedAmount = state.contributionInputs[player.id]
 
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = cardColor)
-    ) {
-        Column(
-            modifier = Modifier.padding(6.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+    Box(modifier = modifier) {
+        Card(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (isHost && !isMe) {
+                        Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { showMenu = true }
+                        )
+                    } else Modifier
+                ),
+            colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
-            Text(
-                "$roleTag${player.name}${if (isMe) "(我)" else ""}",
-                fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
+            Column(
+                modifier = Modifier.padding(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    "$roleTag${player.name}${if (isMe) "(我)" else ""}",
+                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
+                )
+                Text("筹码: ${player.chips}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                if (!submittedAmount.isNullOrBlank()) {
+                    Text("投入: $submittedAmount", fontSize = 11.sp, color = Color(0xFF388E3C))
+                } else {
+                    Text("未提交", fontSize = 11.sp, color = Color.Gray)
+                }
+                if (state.blindsEnabled && state.players.size >= 2) {
+                    val minContrib = getMinContribution(player.id)
+                    if (minContrib > 0) {
+                        Text("最低: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
+                    }
+                }
+                if (isHost) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = state.selectedWinnerIds.contains(player.id),
+                            onCheckedChange = { onToggleWinner(player.id) },
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text("赢家", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                    }
+                }
+            }
+        }
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text("移除 ${player.name}", color = Color.Red) },
+                onClick = {
+                    showMenu = false
+                    onRemovePlayer(player.id)
+                }
             )
-            Text("筹码: ${player.chips}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            if (!submittedAmount.isNullOrBlank()) {
-                Text("投入: $submittedAmount", fontSize = 11.sp, color = Color(0xFF388E3C))
-            } else {
-                Text("未提交", fontSize = 11.sp, color = Color.Gray)
-            }
-            if (state.blindsEnabled && state.players.size >= 2) {
-                val minContrib = getMinContribution(player.id)
-                if (minContrib > 0) {
-                    Text("最低: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
-                }
-            }
-            if (state.mode == TableMode.HOST) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = state.selectedWinnerIds.contains(player.id),
-                        onCheckedChange = { onToggleWinner(player.id) },
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text("赢家", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
-                }
-            }
         }
     }
 }
