@@ -336,31 +336,10 @@ class TableViewModel(
         val newBlinds = blindsManager.rotate(state.blindsState, playersAfterSettle.size)
 
         if (state.blindsEnabled) {
-            val sortedPlayers = playersAfterSettle.sortedBy { it.seatOrder }
-            val (updatedPlayers, blindContribs) = blindsManager.deductBlinds(sortedPlayers, newBlinds)
-
-            val nextHandId = "HAND-${nextHandCounter.toString().padStart(4, '0')}"
-            val now = System.currentTimeMillis()
-            val updatedMap = updatedPlayers.associateBy { it.id }
-            val blindTxs = blindContribs.map { (pid, amount) ->
-                val label = when {
-                    sortedPlayers.indexOfFirst { it.id == pid } == newBlinds.smallBlindIndex -> "小盲"
-                    else -> "大盲"
-                }
-                ChipTransaction(
-                    id = UUID.randomUUID().toString(),
-                    timestamp = now,
-                    handId = nextHandId,
-                    playerId = pid,
-                    amount = -amount,
-                    type = TransactionType.BLIND_DEDUCTION,
-                    note = "${label}扣除",
-                    balanceAfter = updatedMap[pid]?.chips ?: 0
-                )
-            }
-
-            val prefilled = blindContribs.mapValues { (_, v) -> v.toString() }
-            val allLogs = (logsAfterSettle + blindTxs).takeLast(500)
+            // 只预填盲注金额到 contributionInputs，不从筹码中扣除
+            // 结算引擎会在下一手结算时统一处理扣款
+            val blindPrefills = blindsManager.calculateBlindPrefills(playersAfterSettle, newBlinds)
+            val prefilled = blindPrefills.mapValues { (_, v) -> v.toString() }
 
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
@@ -369,21 +348,21 @@ class TableViewModel(
 
             _uiState.update {
                 it.copy(
-                    players = updatedPlayers,
+                    players = playersAfterSettle,
                     handCounter = nextHandCounter,
                     blindsState = newBlinds,
-                    blindContributions = blindContribs,
+                    blindContributions = blindPrefills,
                     contributionInputs = prefilled,
                     selectedWinnerIds = emptySet(),
                     lastSidePots = sidePots,
-                    logs = allLogs,
+                    logs = logsAfterSettle,
                     info = infoText
                 )
             }
         } else {
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
-                append("Hand #$nextHandCounter | D:座位${newBlinds.dealerIndex} (无盲注)")
+                append("Hand #$nextHandCounter | 庄:座位${newBlinds.dealerIndex} (无盲注)")
             }
 
             _uiState.update {
@@ -421,11 +400,20 @@ class TableViewModel(
 
     /**
      * 玩家提交自己的本手投入（房主直接更新本地，客户端发送到服务端）
+     * 投入代表本手总投入（包含盲注），结算时由引擎统一从筹码扣除。
      */
     fun submitMyContribution(amount: Int) {
         val state = _uiState.value
         val selfId = state.selfId
         if (selfId.isBlank()) return
+
+        val player = state.players.firstOrNull { it.id == selfId } ?: return
+
+        // 投入不能超过筹码
+        if (amount > player.chips) {
+            _uiState.update { it.copy(info = "投入不能超过筹码 (${player.chips})") }
+            return
+        }
 
         // 盲注规则校验
         if (state.blindsEnabled && state.players.size >= 2 && amount > 0) {
@@ -437,7 +425,6 @@ class TableViewModel(
         }
 
         if (state.mode == TableMode.HOST) {
-            // 房主直接更新本地
             _uiState.update {
                 it.copy(
                     contributionInputs = it.contributionInputs + (selfId to amount.toString()),
@@ -446,7 +433,6 @@ class TableViewModel(
             }
             syncToClients()
         } else if (state.mode == TableMode.CLIENT) {
-            // 客户端发送到服务端
             client.sendContribution(selfId, amount)
             _uiState.update {
                 it.copy(
@@ -458,42 +444,13 @@ class TableViewModel(
     }
 
     /**
-     * 盲注规则校验：
-     * - 小盲位投入 >= 小盲额（或 all-in）
-     * - 大盲位投入 >= 大盲额（或 all-in）
-     * - 其他参与玩家投入 >= 大盲额（或 all-in）或为 0（弃牌）
+     * 盲注规则校验，委托给 BlindsManager
      */
     private fun validateBlinds(state: TableUiState): List<String> {
-        val sortedPlayers = state.players.sortedBy { it.seatOrder }
-        val blinds = state.blindsState
-        val violations = mutableListOf<String>()
-
-        sortedPlayers.forEachIndexed { index, player ->
-            val contrib = state.contributionInputs[player.id]?.toIntOrNull() ?: 0
-            when (index) {
-                blinds.smallBlindIndex -> {
-                    val required = minOf(blinds.config.smallBlind, player.chips + contrib)
-                    if (contrib < required) {
-                        violations.add("${player.name}(小盲)投入${contrib}不足，至少需要${required}")
-                    }
-                }
-                blinds.bigBlindIndex -> {
-                    val required = minOf(blinds.config.bigBlind, player.chips + contrib)
-                    if (contrib < required) {
-                        violations.add("${player.name}(大盲)投入${contrib}不足，至少需要${required}")
-                    }
-                }
-                else -> {
-                    if (contrib > 0) {
-                        val required = minOf(blinds.config.bigBlind, player.chips + contrib)
-                        if (contrib < required) {
-                            violations.add("${player.name}投入${contrib}不足，跟注至少需要${required}")
-                        }
-                    }
-                }
-            }
+        val contributions = state.players.associate { player ->
+            player.id to (state.contributionInputs[player.id]?.toIntOrNull() ?: 0)
         }
-        return violations
+        return blindsManager.validateContributions(state.players, state.blindsState, contributions)
     }
 
     /**
@@ -507,12 +464,7 @@ class TableViewModel(
         val index = sortedPlayers.indexOfFirst { it.id == playerId }
         if (index < 0) return 0
         val player = sortedPlayers[index]
-        val currentContrib = state.contributionInputs[playerId]?.toIntOrNull() ?: 0
-        return when (index) {
-            blinds.smallBlindIndex -> minOf(blinds.config.smallBlind, player.chips + currentContrib)
-            blinds.bigBlindIndex -> minOf(blinds.config.bigBlind, player.chips + currentContrib)
-            else -> 0 // 非盲注位可以弃牌（投入0）
-        }
+        return blindsManager.getMinContribution(index, player.chips, blinds)
     }
 
     fun toggleWinner(playerId: String) {

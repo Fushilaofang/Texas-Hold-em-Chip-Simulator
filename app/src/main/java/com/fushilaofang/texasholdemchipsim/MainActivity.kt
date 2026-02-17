@@ -237,6 +237,11 @@ private fun TableScreen(
                 "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
                 fontSize = 13.sp, color = Color.Gray
             )
+        } else if (state.mode == TableMode.CLIENT && state.players.size >= 2 && state.blindsEnabled) {
+            Text(
+                "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
+                fontSize = 13.sp, color = Color.Gray
+            )
         }
 
         // ==================== 盲注开关（主持人） ====================
@@ -273,9 +278,11 @@ private fun TableScreen(
             items(sortedPlayers, key = { it.id }) { player ->
                 val seatIdx = sortedPlayers.indexOf(player)
                 val roleTag = buildString {
-                    if (seatIdx == state.blindsState.dealerIndex) append("[庄] ")
-                    if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲] ")
-                    if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲] ")
+                    if (state.blindsEnabled && state.players.size >= 2) {
+                        if (seatIdx == state.blindsState.dealerIndex) append("[庄] ")
+                        if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲] ")
+                        if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲] ")
+                    }
                 }
                 val cardColor = when {
                     seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
@@ -306,7 +313,7 @@ private fun TableScreen(
                         if (state.blindsEnabled && state.players.size >= 2) {
                             val minContrib = getMinContribution(player.id)
                             if (minContrib > 0) {
-                                Text("最低投入: $minContrib", fontSize = 11.sp, color = Color(0xFFE65100))
+                                Text("最低投入: $minContrib | 最大: ${player.chips}", fontSize = 11.sp, color = Color(0xFFE65100))
                             }
                         }
 
