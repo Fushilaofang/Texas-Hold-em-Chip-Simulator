@@ -74,7 +74,12 @@ class MainActivity : ComponentActivity() {
                     onReset = vm::resetTable,
                     onStartNewHand = vm::startNewHand,
                     onToggleBlinds = vm::toggleBlinds,
-                    onUpdateBlinds = vm::updateBlindsConfig
+                    onUpdateBlinds = vm::updateBlindsConfig,
+                    onPlayerNameChange = vm::savePlayerName,
+                    onRoomNameChange = vm::saveRoomName,
+                    onBuyInChange = vm::saveBuyIn,
+                    onSmallBlindChange = vm::saveSmallBlind,
+                    onBigBlindChange = vm::saveBigBlind
                 )
             }
         }
@@ -94,13 +99,19 @@ private fun TableScreen(
     onReset: () -> Unit,
     onStartNewHand: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    onUpdateBlinds: (Int, Int) -> Unit
+    onUpdateBlinds: (Int, Int) -> Unit,
+    onPlayerNameChange: (String) -> Unit,
+    onRoomNameChange: (String) -> Unit,
+    onBuyInChange: (Int) -> Unit,
+    onSmallBlindChange: (Int) -> Unit,
+    onBigBlindChange: (Int) -> Unit
 ) {
-    var roomName by remember { mutableStateOf("家庭牌局") }
-    var playerName by remember { mutableStateOf("") }
-    var buyIn by remember { mutableIntStateOf(1000) }
-    var smallBlind by remember { mutableIntStateOf(10) }
-    var bigBlind by remember { mutableIntStateOf(20) }
+    // 从持久化状态初始化，用户编辑时同步回写
+    var roomName by remember(state.savedRoomName) { mutableStateOf(state.savedRoomName) }
+    var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
+    var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
+    var smallBlind by remember(state.savedSmallBlind) { mutableIntStateOf(state.savedSmallBlind) }
+    var bigBlind by remember(state.savedBigBlind) { mutableIntStateOf(state.savedBigBlind) }
 
     Column(
         modifier = Modifier
@@ -116,11 +127,11 @@ private fun TableScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
-                        value = playerName, onValueChange = { playerName = it },
+                        value = playerName, onValueChange = { playerName = it; onPlayerNameChange(it) },
                         label = { Text("你的昵称") }, modifier = Modifier.fillMaxWidth()
                     )
                     OutlinedTextField(
-                        value = buyIn.toString(), onValueChange = { buyIn = it.toIntOrNull() ?: buyIn },
+                        value = buyIn.toString(), onValueChange = { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) },
                         label = { Text("初始筹码") }, modifier = Modifier.fillMaxWidth()
                     )
 
@@ -128,19 +139,19 @@ private fun TableScreen(
                     Text("创建房间", fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
                     OutlinedTextField(
-                        value = roomName, onValueChange = { roomName = it },
+                        value = roomName, onValueChange = { roomName = it; onRoomNameChange(it) },
                         label = { Text("房间名") }, modifier = Modifier.fillMaxWidth()
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = smallBlind.toString(),
-                            onValueChange = { smallBlind = it.toIntOrNull() ?: smallBlind },
+                            onValueChange = { val v = it.toIntOrNull() ?: smallBlind; smallBlind = v; onSmallBlindChange(v) },
                             label = { Text("小盲") },
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
                             value = bigBlind.toString(),
-                            onValueChange = { bigBlind = it.toIntOrNull() ?: bigBlind },
+                            onValueChange = { val v = it.toIntOrNull() ?: bigBlind; bigBlind = v; onBigBlindChange(v) },
                             label = { Text("大盲") },
                             modifier = Modifier.weight(1f)
                         )

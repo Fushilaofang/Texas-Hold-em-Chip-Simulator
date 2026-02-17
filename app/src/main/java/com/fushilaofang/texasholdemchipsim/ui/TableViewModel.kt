@@ -1,6 +1,7 @@
 package com.fushilaofang.texasholdemchipsim.ui
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -52,7 +53,13 @@ data class TableUiState(
     val lastSidePots: List<SidePot> = emptyList(),
     // --- 房间发现 ---
     val isScanning: Boolean = false,
-    val discoveredRooms: List<DiscoveredRoom> = emptyList()
+    val discoveredRooms: List<DiscoveredRoom> = emptyList(),
+    // --- 用户设置（持久化） ---
+    val savedPlayerName: String = "",
+    val savedRoomName: String = "家庭牌局",
+    val savedBuyIn: Int = 1000,
+    val savedSmallBlind: Int = 10,
+    val savedBigBlind: Int = 20
 )
 
 class TableViewModel(
@@ -65,11 +72,47 @@ class TableViewModel(
     private val client = LanTableClient()
     private val roomAdvertiser = RoomAdvertiser()
     private val roomScanner = RoomScanner()
+    private val prefs: SharedPreferences =
+        context.applicationContext.getSharedPreferences("user_settings", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(
-        TableUiState(logs = repository.load().takeLast(200))
+        TableUiState(
+            logs = repository.load().takeLast(200),
+            savedPlayerName = prefs.getString("player_name", "") ?: "",
+            savedRoomName = prefs.getString("room_name", "家庭牌局") ?: "家庭牌局",
+            savedBuyIn = prefs.getInt("buy_in", 1000),
+            savedSmallBlind = prefs.getInt("small_blind", 10),
+            savedBigBlind = prefs.getInt("big_blind", 20)
+        )
     )
     val uiState: StateFlow<TableUiState> = _uiState.asStateFlow()
+
+    // ==================== 用户设置持久化 ====================
+
+    fun savePlayerName(name: String) {
+        _uiState.update { it.copy(savedPlayerName = name) }
+        prefs.edit().putString("player_name", name).apply()
+    }
+
+    fun saveRoomName(name: String) {
+        _uiState.update { it.copy(savedRoomName = name) }
+        prefs.edit().putString("room_name", name).apply()
+    }
+
+    fun saveBuyIn(value: Int) {
+        _uiState.update { it.copy(savedBuyIn = value) }
+        prefs.edit().putInt("buy_in", value).apply()
+    }
+
+    fun saveSmallBlind(value: Int) {
+        _uiState.update { it.copy(savedSmallBlind = value) }
+        prefs.edit().putInt("small_blind", value).apply()
+    }
+
+    fun saveBigBlind(value: Int) {
+        _uiState.update { it.copy(savedBigBlind = value) }
+        prefs.edit().putInt("big_blind", value).apply()
+    }
 
     // ==================== 房间发现 ====================
 
