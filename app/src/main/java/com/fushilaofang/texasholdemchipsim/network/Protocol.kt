@@ -1,5 +1,6 @@
 package com.fushilaofang.texasholdemchipsim.network
 
+import com.fushilaofang.texasholdemchipsim.blinds.BlindsState
 import com.fushilaofang.texasholdemchipsim.model.ChipTransaction
 import com.fushilaofang.texasholdemchipsim.model.PlayerState
 import kotlinx.serialization.SerialName
@@ -26,7 +27,9 @@ sealed class NetworkMessage {
         val players: List<PlayerState>,
         val handCounter: Int,
         val transactions: List<ChipTransaction>,
-        val contributions: Map<String, Int> = emptyMap()
+        val contributions: Map<String, Int> = emptyMap(),
+        val blindsState: BlindsState = BlindsState(),
+        val blindsEnabled: Boolean = true
     ) : NetworkMessage()
 
     /**

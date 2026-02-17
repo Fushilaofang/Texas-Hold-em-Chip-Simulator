@@ -173,6 +173,8 @@ class TableViewModel(
             contributionsProvider = {
                 _uiState.value.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
             },
+            blindsStateProvider = { _uiState.value.blindsState },
+            blindsEnabledProvider = { _uiState.value.blindsEnabled },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -239,6 +241,8 @@ class TableViewModel(
                             handCounter = event.handCounter,
                             logs = event.transactions.takeLast(200),
                             contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
+                            blindsState = event.blindsState,
+                            blindsEnabled = event.blindsEnabled,
                             info = "牌局状态已同步"
                         )
                     }
@@ -541,7 +545,14 @@ class TableViewModel(
         if (state.mode == TableMode.HOST) {
             val contribs = state.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
             viewModelScope.launch(Dispatchers.IO) {
-                server.broadcastState(state.players, state.handCounter, state.logs, contribs)
+                server.broadcastState(
+                    players = state.players,
+                    handCounter = state.handCounter,
+                    transactions = state.logs,
+                    contributions = contribs,
+                    blindsState = state.blindsState,
+                    blindsEnabled = state.blindsEnabled
+                )
             }
         }
     }

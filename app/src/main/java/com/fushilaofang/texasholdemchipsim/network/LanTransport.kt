@@ -50,6 +50,8 @@ class LanTableServer(
         handCounterProvider: () -> Int,
         txProvider: () -> List<ChipTransaction>,
         contributionsProvider: () -> Map<String, Int> = { emptyMap() },
+        blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState = { com.fushilaofang.texasholdemchipsim.blinds.BlindsState() },
+        blindsEnabledProvider: () -> Boolean = { true },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -67,6 +69,8 @@ class LanTableServer(
                             handCounterProvider = handCounterProvider,
                             txProvider = txProvider,
                             contributionsProvider = contributionsProvider,
+                            blindsStateProvider = blindsStateProvider,
+                            blindsEnabledProvider = blindsEnabledProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
                         )
@@ -78,12 +82,21 @@ class LanTableServer(
         }
     }
 
-    fun broadcastState(players: List<PlayerState>, handCounter: Int, transactions: List<ChipTransaction>, contributions: Map<String, Int> = emptyMap()) {
+    fun broadcastState(
+        players: List<PlayerState>,
+        handCounter: Int,
+        transactions: List<ChipTransaction>,
+        contributions: Map<String, Int> = emptyMap(),
+        blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
+        blindsEnabled: Boolean = true
+    ) {
         val message = NetworkMessage.StateSync(
             players = players,
             handCounter = handCounter,
             transactions = transactions.take(50),
-            contributions = contributions
+            contributions = contributions,
+            blindsState = blindsState,
+            blindsEnabled = blindsEnabled
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -127,6 +140,8 @@ class LanTableServer(
         handCounterProvider: () -> Int,
         txProvider: () -> List<ChipTransaction>,
         contributionsProvider: () -> Map<String, Int>,
+        blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState,
+        blindsEnabledProvider: () -> Boolean,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -165,7 +180,9 @@ class LanTableServer(
                                 players = hostPlayersProvider(),
                                 handCounter = handCounterProvider(),
                                 transactions = txProvider().takeLast(50),
-                                contributions = contributionsProvider()
+                                contributions = contributionsProvider(),
+                                blindsState = blindsStateProvider(),
+                                blindsEnabled = blindsEnabledProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                             writer.newLine()
@@ -219,7 +236,9 @@ class LanTableClient(
             val players: List<PlayerState>,
             val handCounter: Int,
             val transactions: List<ChipTransaction>,
-            val contributions: Map<String, Int> = emptyMap()
+            val contributions: Map<String, Int> = emptyMap(),
+            val blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
+            val blindsEnabled: Boolean = true
         ) : Event()
 
         data class Error(val message: String) : Event()
@@ -254,7 +273,9 @@ class LanTableClient(
                                     players = msg.players,
                                     handCounter = msg.handCounter,
                                     transactions = msg.transactions,
-                                    contributions = msg.contributions
+                                    contributions = msg.contributions,
+                                    blindsState = msg.blindsState,
+                                    blindsEnabled = msg.blindsEnabled
                                 )
                             )
                         }
