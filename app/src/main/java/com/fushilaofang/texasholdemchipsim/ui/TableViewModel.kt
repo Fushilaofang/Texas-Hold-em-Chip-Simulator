@@ -149,6 +149,7 @@ class TableViewModel(
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 disconnectedPlayerIds = emptySet(),
+                waitingForHostReconnect = false,
                 info = "准备开始"
             )
         }

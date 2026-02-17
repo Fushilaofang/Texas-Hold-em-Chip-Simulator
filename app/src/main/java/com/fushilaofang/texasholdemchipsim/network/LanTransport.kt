@@ -6,6 +6,7 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
@@ -569,25 +570,32 @@ class LanTableClient(
 
         scope.launch {
             var attempt = 0
-            val maxAttempts = 9999
-            while (attempt < maxAttempts && shouldReconnect && isActive) {
+            while (attempt < 9999 && shouldReconnect && isActive) {
                 attempt++
-                val delayMs = (2000L * attempt).coerceAtMost(10_000L)
-                onEvent(Event.Error("连接断开，第${attempt}次重连中...（${delayMs / 1000}秒后）"))
+                val delayMs = (3000L * attempt.coerceAtMost(3)).coerceAtMost(10_000L)
                 delay(delayMs)
-
                 if (!shouldReconnect) break
 
-                try {
-                    doConnect(ip, name, lastBuyIn, isReconnect = true, onEvent = onEvent)
-                    return@launch // doConnect 内部会阻塞直到断线
+                // 快速 TCP 探测房主是否已重启服务
+                val reachable = try {
+                    Socket().use { s ->
+                        s.connect(InetSocketAddress(ip, DEFAULT_PORT), 3000)
+                    }
+                    true
                 } catch (_: Exception) {
-                    // 重连失败，继续
+                    false
+                }
+
+                if (reachable) {
+                    // 房主已上线，执行完整重连
+                    reconnecting = false
+                    doConnect(ip, name, lastBuyIn, isReconnect = true, onEvent = onEvent)
+                    return@launch
                 }
             }
             if (shouldReconnect) {
                 reconnecting = false
-                onEvent(Event.ReconnectFailed("重连失败，已尝试${maxAttempts}次"))
+                onEvent(Event.ReconnectFailed("重连失败"))
             }
         }
     }
