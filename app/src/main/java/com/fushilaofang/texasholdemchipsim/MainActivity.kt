@@ -407,9 +407,11 @@ private fun LobbyScreen(
             items(sortedPlayers, key = { it.id }) { player ->
                 val isMe = player.id == state.selfId
                 val isHost = state.mode == TableMode.HOST
+                val isOffline = state.disconnectedPlayerIds.contains(player.id)
                 var showMenu by remember { mutableStateOf(false) }
 
                 val cardColor = when {
+                    isOffline -> Color(0xFFEEEEEE)
                     player.isReady -> Color(0xFFE8F5E9)
                     else -> MaterialTheme.colorScheme.surface
                 }
@@ -435,10 +437,15 @@ private fun LobbyScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text(
-                                    "${player.name}${if (isMe) " (我)" else ""}",
-                                    fontWeight = FontWeight.SemiBold
-                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${player.name}${if (isMe) " (我)" else ""}",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    if (isOffline) {
+                                        Text("[掉线]", fontSize = 11.sp, color = Color.Red)
+                                    }
+                                }
                                 Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                             }
                             Text(
@@ -703,6 +710,7 @@ private fun CompactPlayerCard(
     val seatIdx = sortedPlayers.indexOf(player)
     val isMe = player.id == state.selfId
     val isHost = state.mode == TableMode.HOST
+    val isOffline = state.disconnectedPlayerIds.contains(player.id)
     var showMenu by remember { mutableStateOf(false) }
 
     val roleTag = buildString {
@@ -713,6 +721,7 @@ private fun CompactPlayerCard(
         }
     }
     val cardColor = when {
+        isOffline -> Color(0xFFEEEEEE)
         isMe -> Color(0xFFFFF8E1)
         state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
         else -> MaterialTheme.colorScheme.surface
@@ -737,10 +746,16 @@ private fun CompactPlayerCard(
                 modifier = Modifier.padding(6.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text(
-                    "$roleTag${player.name}${if (isMe) "(我)" else ""}",
-                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "$roleTag${player.name}${if (isMe) "(我)" else ""}",
+                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (isOffline) {
+                        Text("[掉线]", fontSize = 10.sp, color = Color.Red)
+                    }
+                }
                 Text("筹码: ${player.chips}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 if (!submittedAmount.isNullOrBlank()) {
                     Text("投入: $submittedAmount", fontSize = 11.sp, color = Color(0xFF388E3C))

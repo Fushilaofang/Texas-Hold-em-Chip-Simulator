@@ -62,6 +62,8 @@ data class TableUiState(
     val blindContributions: Map<String, Int> = emptyMap(),
     // --- 边池 ---
     val lastSidePots: List<SidePot> = emptyList(),
+    // --- 掉线玩家 ---
+    val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 房间发现 ---
     val isScanning: Boolean = false,
     val discoveredRooms: List<DiscoveredRoom> = emptyList(),
@@ -229,13 +231,21 @@ class TableViewModel(
                     is LanTableServer.Event.PlayerDisconnected -> {
                         val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
                         _uiState.update { state ->
-                            state.copy(info = "$pName 掉线，等待重连...")
+                            state.copy(
+                                disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
+                                info = "$pName 掉线，等待重连..."
+                            )
                         }
                         // 不移除玩家，等待重连或超时
                     }
                     is LanTableServer.Event.PlayerReconnected -> {
                         val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                        _uiState.update { it.copy(info = "$pName 已重连") }
+                        _uiState.update { state ->
+                            state.copy(
+                                disconnectedPlayerIds = state.disconnectedPlayerIds - event.playerId,
+                                info = "$pName 已重连"
+                            )
+                        }
                         syncToClients()
                     }
                     is LanTableServer.Event.ContributionReceived -> {
@@ -364,6 +374,7 @@ class TableViewModel(
         _uiState.update { s ->
             s.copy(
                 players = s.players.filter { it.id != playerId },
+                disconnectedPlayerIds = s.disconnectedPlayerIds - playerId,
                 info = "已移除 $pName"
             )
         }
