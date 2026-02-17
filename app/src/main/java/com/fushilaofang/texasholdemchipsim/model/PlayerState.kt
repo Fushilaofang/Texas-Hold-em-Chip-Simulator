@@ -7,5 +7,6 @@ data class PlayerState(
     val id: String,
     val name: String,
     val chips: Int,
-    val seatOrder: Int
+    val seatOrder: Int,
+    val isReady: Boolean = false
 )

@@ -29,7 +29,8 @@ sealed class NetworkMessage {
         val transactions: List<ChipTransaction>,
         val contributions: Map<String, Int> = emptyMap(),
         val blindsState: BlindsState = BlindsState(),
-        val blindsEnabled: Boolean = true
+        val blindsEnabled: Boolean = true,
+        val gameStarted: Boolean = false
     ) : NetworkMessage()
 
     /**
@@ -40,6 +41,16 @@ sealed class NetworkMessage {
     data class SubmitContribution(
         val playerId: String,
         val amount: Int
+    ) : NetworkMessage()
+
+    /**
+     * 玩家切换准备状态（客户端 → 服务端）
+     */
+    @Serializable
+    @SerialName("ready_toggle")
+    data class ReadyToggle(
+        val playerId: String,
+        val isReady: Boolean
     ) : NetworkMessage()
 
     @Serializable

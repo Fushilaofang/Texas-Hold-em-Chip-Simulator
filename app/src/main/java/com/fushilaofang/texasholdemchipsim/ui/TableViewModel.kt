@@ -33,8 +33,18 @@ enum class TableMode {
     CLIENT
 }
 
+/** UI 所在的屏幕 */
+enum class ScreenState {
+    HOME,           // 首页：创建 / 加入
+    CREATE_ROOM,    // 创建房间设置
+    JOIN_ROOM,      // 搜索并加入房间
+    LOBBY,          // 等待准备
+    GAME            // 游戏中
+}
+
 data class TableUiState(
     val mode: TableMode = TableMode.IDLE,
+    val screen: ScreenState = ScreenState.HOME,
     val tableName: String = "家庭牌局",
     val selfId: String = "",
     val selfName: String = "",
@@ -45,6 +55,7 @@ data class TableUiState(
     val handCounter: Int = 1,
     val logs: List<ChipTransaction> = emptyList(),
     val info: String = "准备开始",
+    val gameStarted: Boolean = false,
     // --- 盲注 ---
     val blindsState: BlindsState = BlindsState(),
     val blindsEnabled: Boolean = true,
@@ -99,6 +110,32 @@ class TableViewModel(
         prefs.edit().putString("room_name", name).apply()
     }
 
+    // ==================== 屏幕导航 ====================
+
+    fun navigateTo(screen: ScreenState) {
+        _uiState.update { it.copy(screen = screen) }
+    }
+
+    fun goHome() {
+        // 断开连接，回到首页
+        roomAdvertiser.close()
+        roomScanner.close()
+        server.close()
+        client.close()
+        _uiState.update {
+            it.copy(
+                mode = TableMode.IDLE,
+                screen = ScreenState.HOME,
+                players = emptyList(),
+                gameStarted = false,
+                selfId = "",
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                info = "准备开始"
+            )
+        }
+    }
+
     fun saveBuyIn(value: Int) {
         _uiState.update { it.copy(savedBuyIn = value) }
         prefs.edit().putInt("buy_in", value).apply()
@@ -141,13 +178,15 @@ class TableViewModel(
             id = hostId,
             name = hostName.ifBlank { "庄家" },
             chips = buyIn,
-            seatOrder = 0
+            seatOrder = 0,
+            isReady = true // 房主默认准备
         )
         val initialBlinds = blindsManager.initialize(1, blindsConfig)
 
         _uiState.update {
             it.copy(
                 mode = TableMode.HOST,
+                screen = ScreenState.LOBBY,
                 tableName = roomName.ifBlank { "家庭牌局" },
                 selfId = hostId,
                 selfName = hostPlayer.name,
@@ -159,9 +198,10 @@ class TableViewModel(
                 blindsEnabled = true,
                 blindContributions = emptyMap(),
                 lastSidePots = emptyList(),
+                gameStarted = false,
                 isScanning = false,
                 discoveredRooms = emptyList(),
-                info = "已创建房间「${roomName.ifBlank { "家庭牌局" }}」| 等待玩家加入"
+                info = "已创建房间「${roomName.ifBlank { "家庭牌局" }}」| 等待玩家加入并准备"
             )
         }
 
@@ -175,6 +215,7 @@ class TableViewModel(
             },
             blindsStateProvider = { _uiState.value.blindsState },
             blindsEnabledProvider = { _uiState.value.blindsEnabled },
+            gameStartedProvider = { _uiState.value.gameStarted },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -186,15 +227,32 @@ class TableViewModel(
                     is LanTableServer.Event.Error ->
                         _uiState.update { it.copy(info = event.message) }
                     is LanTableServer.Event.PlayerDisconnected ->
-                        _uiState.update { it.copy(info = "玩家离线: ${event.playerId.take(6)}") }
+                        _uiState.update { state ->
+                            state.copy(
+                                players = state.players.filter { it.id != event.playerId },
+                                info = "玩家离线"
+                            )
+                        }
                     is LanTableServer.Event.ContributionReceived -> {
-                        // 接收客户端提交的投入
                         _uiState.update { state ->
                             val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
                             val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
                             state.copy(
                                 contributionInputs = newInputs,
                                 info = "$playerName 提交投入: ${event.amount}"
+                            )
+                        }
+                        syncToClients()
+                    }
+                    is LanTableServer.Event.ReadyToggleReceived -> {
+                        _uiState.update { state ->
+                            val updatedPlayers = state.players.map {
+                                if (it.id == event.playerId) it.copy(isReady = event.isReady) else it
+                            }
+                            val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                            state.copy(
+                                players = updatedPlayers,
+                                info = "$playerName ${if (event.isReady) "已准备" else "取消准备"}"
                             )
                         }
                         syncToClients()
@@ -221,9 +279,11 @@ class TableViewModel(
         _uiState.update {
             it.copy(
                 mode = TableMode.CLIENT,
+                screen = ScreenState.LOBBY,
                 tableName = room.roomName,
                 hostIp = room.hostIp,
                 selfName = playerName,
+                gameStarted = false,
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 info = "正在加入「${room.roomName}」..."
@@ -234,18 +294,22 @@ class TableViewModel(
             when (event) {
                 is LanTableClient.Event.JoinAccepted ->
                     _uiState.update { it.copy(selfId = event.playerId, info = "已加入「${room.roomName}」") }
-                is LanTableClient.Event.StateSync ->
+                is LanTableClient.Event.StateSync -> {
                     _uiState.update {
+                        val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
                         it.copy(
+                            screen = newScreen,
                             players = event.players,
                             handCounter = event.handCounter,
                             logs = event.transactions.takeLast(200),
                             contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
                             blindsState = event.blindsState,
                             blindsEnabled = event.blindsEnabled,
-                            info = "牌局状态已同步"
+                            gameStarted = event.gameStarted,
+                            info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                         )
                     }
+                }
                 is LanTableClient.Event.Error ->
                     _uiState.update { it.copy(info = event.message) }
             }
@@ -266,6 +330,66 @@ class TableViewModel(
 
     fun toggleBlinds(enabled: Boolean) {
         _uiState.update { it.copy(blindsEnabled = enabled) }
+    }
+
+    // ==================== 准备 / 开始游戏 ====================
+
+    /** 非房主玩家切换准备状态 */
+    fun toggleReady() {
+        val state = _uiState.value
+        val selfId = state.selfId
+        if (selfId.isBlank()) return
+
+        val currentReady = state.players.firstOrNull { it.id == selfId }?.isReady ?: false
+        val newReady = !currentReady
+
+        _uiState.update { s ->
+            s.copy(
+                players = s.players.map { if (it.id == selfId) it.copy(isReady = newReady) else it },
+                info = if (newReady) "已准备" else "已取消准备"
+            )
+        }
+
+        if (state.mode == TableMode.CLIENT) {
+            client.sendReady(selfId, newReady)
+        }
+        if (state.mode == TableMode.HOST) {
+            syncToClients()
+        }
+    }
+
+    /** 房主点击"开始游戏" */
+    fun startGame() {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        if (state.players.size < 2) {
+            _uiState.update { it.copy(info = "至少需要 2 名玩家") }
+            return
+        }
+        val notReady = state.players.filter { !it.isReady }
+        if (notReady.isNotEmpty()) {
+            val names = notReady.joinToString(", ") { it.name }
+            _uiState.update { it.copy(info = "以下玩家未准备: $names") }
+            return
+        }
+
+        // 初始化盲注位
+        val blinds = blindsManager.initialize(state.players.size, state.blindsState.config)
+        val blindPrefills = if (state.blindsEnabled) {
+            blindsManager.calculateBlindPrefills(state.players, blinds)
+        } else emptyMap()
+
+        _uiState.update {
+            it.copy(
+                screen = ScreenState.GAME,
+                gameStarted = true,
+                blindsState = blinds,
+                blindContributions = blindPrefills,
+                contributionInputs = blindPrefills.mapValues { (_, v) -> v.toString() },
+                info = "游戏开始！Hand #${state.handCounter}"
+            )
+        }
+        syncToClients()
     }
 
     /**
@@ -503,7 +627,8 @@ class TableViewModel(
                     transactions = state.logs,
                     contributions = contribs,
                     blindsState = state.blindsState,
-                    blindsEnabled = state.blindsEnabled
+                    blindsEnabled = state.blindsEnabled,
+                    gameStarted = state.gameStarted
                 )
             }
         }

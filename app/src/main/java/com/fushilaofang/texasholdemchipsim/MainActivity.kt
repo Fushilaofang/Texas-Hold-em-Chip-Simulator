@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -39,12 +40,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fushilaofang.texasholdemchipsim.blinds.BlindsConfig
 import com.fushilaofang.texasholdemchipsim.network.DiscoveredRoom
+import com.fushilaofang.texasholdemchipsim.ui.ScreenState
 import com.fushilaofang.texasholdemchipsim.ui.TableMode
 import com.fushilaofang.texasholdemchipsim.ui.TableUiState
 import com.fushilaofang.texasholdemchipsim.ui.TableViewModel
@@ -62,61 +65,418 @@ class MainActivity : ComponentActivity() {
             val state by vm.uiState.collectAsStateWithLifecycle()
 
             Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                TableScreen(
-                    state = state,
-                    onHost = vm::hostTable,
-                    onJoinRoom = vm::joinRoom,
-                    onStartScan = vm::startRoomScan,
-                    onStopScan = vm::stopRoomScan,
-                    onContributionChange = vm::updateContribution,
-                    onSubmitContribution = vm::submitMyContribution,
-                    onToggleWinner = vm::toggleWinner,
-                    onSettleAndAdvance = vm::settleAndAdvance,
-                    onReset = vm::resetTable,
-                    onToggleBlinds = vm::toggleBlinds,
-                    onUpdateBlinds = vm::updateBlindsConfig,
-                    onPlayerNameChange = vm::savePlayerName,
-                    onRoomNameChange = vm::saveRoomName,
-                    onBuyInChange = vm::saveBuyIn,
-                    onSmallBlindChange = vm::saveSmallBlind,
-                    onBigBlindChange = vm::saveBigBlind,
-                    getMinContribution = vm::getMinContribution
+                when (state.screen) {
+                    ScreenState.HOME -> HomeScreen(
+                        state = state,
+                        onNavigateCreate = { vm.navigateTo(ScreenState.CREATE_ROOM) },
+                        onNavigateJoin = { vm.navigateTo(ScreenState.JOIN_ROOM) },
+                        onPlayerNameChange = vm::savePlayerName,
+                        onBuyInChange = vm::saveBuyIn
+                    )
+                    ScreenState.CREATE_ROOM -> CreateRoomScreen(
+                        state = state,
+                        onBack = { vm.navigateTo(ScreenState.HOME) },
+                        onHost = vm::hostTable,
+                        onRoomNameChange = vm::saveRoomName,
+                        onSmallBlindChange = vm::saveSmallBlind,
+                        onBigBlindChange = vm::saveBigBlind
+                    )
+                    ScreenState.JOIN_ROOM -> JoinRoomScreen(
+                        state = state,
+                        onBack = { vm.stopRoomScan(); vm.navigateTo(ScreenState.HOME) },
+                        onStartScan = vm::startRoomScan,
+                        onStopScan = vm::stopRoomScan,
+                        onJoinRoom = vm::joinRoom
+                    )
+                    ScreenState.LOBBY -> LobbyScreen(
+                        state = state,
+                        onToggleReady = vm::toggleReady,
+                        onStartGame = vm::startGame,
+                        onLeave = vm::goHome,
+                        onToggleBlinds = vm::toggleBlinds
+                    )
+                    ScreenState.GAME -> GameScreen(
+                        state = state,
+                        onContributionChange = vm::updateContribution,
+                        onSubmitContribution = vm::submitMyContribution,
+                        onToggleWinner = vm::toggleWinner,
+                        onSettleAndAdvance = vm::settleAndAdvance,
+                        onReset = vm::resetTable,
+                        onToggleBlinds = vm::toggleBlinds,
+                        getMinContribution = vm::getMinContribution
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ==================== 首页 ====================
+
+@Composable
+private fun HomeScreen(
+    state: TableUiState,
+    onNavigateCreate: () -> Unit,
+    onNavigateJoin: () -> Unit,
+    onPlayerNameChange: (String) -> Unit,
+    onBuyInChange: (Int) -> Unit
+) {
+    var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
+    var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            "德州扑克筹码统计",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(32.dp))
+
+        OutlinedTextField(
+            value = playerName,
+            onValueChange = { playerName = it; onPlayerNameChange(it) },
+            label = { Text("你的昵称") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = buyIn.toString(),
+            onValueChange = { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) },
+            label = { Text("初始筹码") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(Modifier.height(32.dp))
+
+        Button(
+            onClick = onNavigateCreate,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Text("创建房间", fontSize = 18.sp)
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedButton(
+            onClick = onNavigateJoin,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Text("加入房间", fontSize = 18.sp)
+        }
+    }
+}
+
+// ==================== 创建房间 ====================
+
+@Composable
+private fun CreateRoomScreen(
+    state: TableUiState,
+    onBack: () -> Unit,
+    onHost: (String, String, Int, BlindsConfig) -> Unit,
+    onRoomNameChange: (String) -> Unit,
+    onSmallBlindChange: (Int) -> Unit,
+    onBigBlindChange: (Int) -> Unit
+) {
+    var roomName by remember(state.savedRoomName) { mutableStateOf(state.savedRoomName) }
+    var smallBlind by remember(state.savedSmallBlind) { mutableIntStateOf(state.savedSmallBlind) }
+    var bigBlind by remember(state.savedBigBlind) { mutableIntStateOf(state.savedBigBlind) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack) { Text("← 返回") }
+            Spacer(Modifier.weight(1f))
+            Text("创建房间", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            // 占位保持居中
+            Spacer(Modifier.size(72.dp))
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = roomName,
+            onValueChange = { roomName = it; onRoomNameChange(it) },
+            label = { Text("房间名") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = smallBlind.toString(),
+                onValueChange = { val v = it.toIntOrNull() ?: smallBlind; smallBlind = v; onSmallBlindChange(v) },
+                label = { Text("小盲") },
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = bigBlind.toString(),
+                onValueChange = { val v = it.toIntOrNull() ?: bigBlind; bigBlind = v; onBigBlindChange(v) },
+                label = { Text("大盲") },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("房间信息", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text("昵称: ${state.savedPlayerName.ifBlank { "庄家" }}", fontSize = 13.sp)
+                Text("初始筹码: ${state.savedBuyIn}", fontSize = 13.sp)
+                Text("小盲/大盲: $smallBlind / $bigBlind", fontSize = 13.sp)
+            }
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        Button(
+            onClick = {
+                onHost(roomName, state.savedPlayerName, state.savedBuyIn, BlindsConfig(smallBlind, bigBlind))
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+        ) {
+            Text("创建并等待玩家", fontSize = 18.sp)
+        }
+    }
+}
+
+// ==================== 加入房间 ====================
+
+@Composable
+private fun JoinRoomScreen(
+    state: TableUiState,
+    onBack: () -> Unit,
+    onStartScan: () -> Unit,
+    onStopScan: () -> Unit,
+    onJoinRoom: (DiscoveredRoom, String, Int) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack) { Text("← 返回") }
+            Spacer(Modifier.weight(1f))
+            Text("加入房间", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(72.dp))
+        }
+
+        Text("状态：${state.info}", fontSize = 13.sp, color = Color.Gray)
+
+        if (!state.isScanning) {
+            Button(
+                onClick = onStartScan,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("搜索局域网房间") }
+        } else {
+            OutlinedButton(
+                onClick = onStopScan,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("停止搜索") }
+        }
+
+        if (state.isScanning) {
+            DisposableEffect(Unit) {
+                onDispose { onStopScan() }
+            }
+        }
+
+        HorizontalDivider()
+
+        if (state.discoveredRooms.isNotEmpty()) {
+            Text("发现的房间:", fontWeight = FontWeight.Bold)
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.discoveredRooms) { room ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onJoinRoom(room, state.savedPlayerName, state.savedBuyIn) },
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text(
+                                    "房主: ${room.hostName} | ${room.playerCount}人在线",
+                                    fontSize = 12.sp, color = Color.Gray
+                                )
+                            }
+                            Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        } else if (state.isScanning) {
+            Text("搜索中...", fontSize = 14.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        } else {
+            Text("点击上方按钮开始搜索", fontSize = 14.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+// ==================== 大厅等待 ====================
+
+@Composable
+private fun LobbyScreen(
+    state: TableUiState,
+    onToggleReady: () -> Unit,
+    onStartGame: () -> Unit,
+    onLeave: () -> Unit,
+    onToggleBlinds: (Boolean) -> Unit
+) {
+    val sortedPlayers = state.players.sortedBy { it.seatOrder }
+    val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
+    val readyCount = sortedPlayers.count { it.isReady }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onLeave) { Text("← 离开") }
+            Spacer(Modifier.weight(1f))
+            Text("房间大厅", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.size(72.dp))
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text("房间: ${state.tableName}", fontWeight = FontWeight.Bold)
+                Text("状态: ${state.info}", fontSize = 13.sp, color = Color.Gray)
+                Text("玩家: ${sortedPlayers.size} | 已准备: $readyCount / ${sortedPlayers.size}", fontSize = 13.sp)
+                if (state.blindsEnabled) {
+                    Text("小盲/大盲: ${state.blindsState.config.smallBlind} / ${state.blindsState.config.bigBlind}", fontSize = 13.sp)
+                }
+            }
+        }
+
+        // 房主盲注开关
+        if (state.mode == TableMode.HOST) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("盲注自动轮转", fontSize = 13.sp)
+                Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
+            }
+        }
+
+        HorizontalDivider()
+        Text("玩家列表", fontWeight = FontWeight.Bold)
+
+        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(sortedPlayers, key = { it.id }) { player ->
+                val isMe = player.id == state.selfId
+                val cardColor = when {
+                    player.isReady -> Color(0xFFE8F5E9)
+                    else -> MaterialTheme.colorScheme.surface
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardColor)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                "${player.name}${if (isMe) " (我)" else ""}",
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
+                        }
+                        Text(
+                            if (player.isReady) "✔ 已准备" else "未准备",
+                            color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // 底部操作按钮
+        if (state.mode == TableMode.HOST) {
+            Button(
+                onClick = onStartGame,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                enabled = allReady && sortedPlayers.size >= 2
+            ) {
+                Text(
+                    if (!allReady) "等待所有玩家准备..." else "开始游戏",
+                    fontSize = 18.sp
+                )
+            }
+        } else {
+            val selfReady = sortedPlayers.firstOrNull { it.id == state.selfId }?.isReady ?: false
+            Button(
+                onClick = onToggleReady,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (selfReady) Color(0xFFFF7043) else MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Text(
+                    if (selfReady) "取消准备" else "准备",
+                    fontSize = 18.sp
                 )
             }
         }
     }
 }
 
+// ==================== 游戏界面 ====================
+
 @Composable
-private fun TableScreen(
+private fun GameScreen(
     state: TableUiState,
-    onHost: (String, String, Int, BlindsConfig) -> Unit,
-    onJoinRoom: (DiscoveredRoom, String, Int) -> Unit,
-    onStartScan: () -> Unit,
-    onStopScan: () -> Unit,
     onContributionChange: (String, String) -> Unit,
     onSubmitContribution: (Int) -> Unit,
     onToggleWinner: (String) -> Unit,
     onSettleAndAdvance: () -> Unit,
     onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    onUpdateBlinds: (Int, Int) -> Unit,
-    onPlayerNameChange: (String) -> Unit,
-    onRoomNameChange: (String) -> Unit,
-    onBuyInChange: (Int) -> Unit,
-    onSmallBlindChange: (Int) -> Unit,
-    onBigBlindChange: (Int) -> Unit,
     getMinContribution: (String) -> Int
 ) {
-    // 从持久化状态初始化，用户编辑时同步回写
-    var roomName by remember(state.savedRoomName) { mutableStateOf(state.savedRoomName) }
-    var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
-    var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
-    var smallBlind by remember(state.savedSmallBlind) { mutableIntStateOf(state.savedSmallBlind) }
-    var bigBlind by remember(state.savedBigBlind) { mutableIntStateOf(state.savedBigBlind) }
-
-    // 本地投入输入框（只有自己的）
     var myContribInput by remember { mutableStateOf("") }
+    val sortedPlayers = state.players.sortedBy { it.seatOrder }
 
     Column(
         modifier = Modifier
@@ -124,106 +484,7 @@ private fun TableScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("德州扑克牌桌筹码统计", style = MaterialTheme.typography.headlineSmall)
-        Text("状态：${state.info}", style = MaterialTheme.typography.bodyMedium)
-
-        // ==================== 开桌 / 搜索房间面板 ====================
-        if (state.mode == TableMode.IDLE) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = playerName, onValueChange = { playerName = it; onPlayerNameChange(it) },
-                        label = { Text("你的昵称") }, modifier = Modifier.fillMaxWidth()
-                    )
-                    OutlinedTextField(
-                        value = buyIn.toString(), onValueChange = { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) },
-                        label = { Text("初始筹码") }, modifier = Modifier.fillMaxWidth()
-                    )
-
-                    HorizontalDivider()
-                    Text("创建房间", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-
-                    OutlinedTextField(
-                        value = roomName, onValueChange = { roomName = it; onRoomNameChange(it) },
-                        label = { Text("房间名") }, modifier = Modifier.fillMaxWidth()
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = smallBlind.toString(),
-                            onValueChange = { val v = it.toIntOrNull() ?: smallBlind; smallBlind = v; onSmallBlindChange(v) },
-                            label = { Text("小盲") },
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = bigBlind.toString(),
-                            onValueChange = { val v = it.toIntOrNull() ?: bigBlind; bigBlind = v; onBigBlindChange(v) },
-                            label = { Text("大盲") },
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Button(
-                        onClick = { onHost(roomName, playerName, buyIn, BlindsConfig(smallBlind, bigBlind)) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("创建房间") }
-
-                    HorizontalDivider()
-                    Text("搜索并加入房间", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-
-                    if (!state.isScanning) {
-                        Button(
-                            onClick = onStartScan,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                        ) { Text("搜索局域网房间") }
-                    } else {
-                        OutlinedButton(
-                            onClick = onStopScan,
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("停止搜索") }
-                    }
-
-                    if (state.isScanning) {
-                        DisposableEffect(Unit) {
-                            onDispose { onStopScan() }
-                        }
-                    }
-
-                    // 发现的房间列表
-                    if (state.discoveredRooms.isNotEmpty()) {
-                        state.discoveredRooms.forEach { room ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onJoinRoom(room, playerName, buyIn) },
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Text(
-                                            "房主: ${room.hostName} | ${room.playerCount}人在线",
-                                            fontSize = 12.sp, color = Color.Gray
-                                        )
-                                    }
-                                    Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    } else if (state.isScanning) {
-                        Text("搜索中...", fontSize = 13.sp, color = Color.Gray)
-                    }
-                }
-            }
-        }
-
         // ==================== 牌桌信息栏 ====================
-        val sortedPlayers = state.players.sortedBy { it.seatOrder }
         val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
         val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
         val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
@@ -232,19 +493,16 @@ private fun TableScreen(
             Text("房间：${state.tableName}", fontWeight = FontWeight.Bold)
             Text("手数：${state.handCounter}")
         }
-        if (state.mode == TableMode.HOST && state.players.size >= 2) {
-            Text(
-                "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
-                fontSize = 13.sp, color = Color.Gray
-            )
-        } else if (state.mode == TableMode.CLIENT && state.players.size >= 2 && state.blindsEnabled) {
+        Text("状态：${state.info}", fontSize = 12.sp, color = Color.Gray)
+
+        if (state.blindsEnabled && state.players.size >= 2) {
             Text(
                 "庄: $dealerName | 小盲: $sbName | 大盲: $bbName | 小盲=${state.blindsState.config.smallBlind} 大盲=${state.blindsState.config.bigBlind}",
                 fontSize = 13.sp, color = Color.Gray
             )
         }
 
-        // ==================== 盲注开关（主持人） ====================
+        // ==================== 盲注开关（房主） ====================
         if (state.mode == TableMode.HOST) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("盲注自动轮转", fontSize = 13.sp)
@@ -285,7 +543,7 @@ private fun TableScreen(
                     }
                 }
                 val cardColor = when {
-                    seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
+                    state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
                     else -> MaterialTheme.colorScheme.surface
                 }
                 Card(
@@ -301,7 +559,6 @@ private fun TableScreen(
                             Text("筹码: ${player.chips}", fontWeight = FontWeight.Bold)
                         }
 
-                        // 显示该玩家已提交的投入
                         val submittedAmount = state.contributionInputs[player.id]
                         if (!submittedAmount.isNullOrBlank()) {
                             Text("已提交投入: $submittedAmount", fontSize = 12.sp, color = Color(0xFF388E3C))
@@ -309,7 +566,6 @@ private fun TableScreen(
                             Text("未提交投入", fontSize = 12.sp, color = Color.Gray)
                         }
 
-                        // 盲注开启时显示最低投入要求
                         if (state.blindsEnabled && state.players.size >= 2) {
                             val minContrib = getMinContribution(player.id)
                             if (minContrib > 0) {
@@ -317,7 +573,6 @@ private fun TableScreen(
                             }
                         }
 
-                        // 只有自己能编辑自己的投入
                         val isMe = player.id == state.selfId
                         if (isMe) {
                             Row(
@@ -338,7 +593,6 @@ private fun TableScreen(
                             }
                         }
 
-                        // 房主可以勾选赢家
                         if (state.mode == TableMode.HOST) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(

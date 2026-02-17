@@ -35,6 +35,7 @@ class LanTableServer(
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
+        data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -52,6 +53,7 @@ class LanTableServer(
         contributionsProvider: () -> Map<String, Int> = { emptyMap() },
         blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState = { com.fushilaofang.texasholdemchipsim.blinds.BlindsState() },
         blindsEnabledProvider: () -> Boolean = { true },
+        gameStartedProvider: () -> Boolean = { false },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -71,6 +73,7 @@ class LanTableServer(
                             contributionsProvider = contributionsProvider,
                             blindsStateProvider = blindsStateProvider,
                             blindsEnabledProvider = blindsEnabledProvider,
+                            gameStartedProvider = gameStartedProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
                         )
@@ -88,7 +91,8 @@ class LanTableServer(
         transactions: List<ChipTransaction>,
         contributions: Map<String, Int> = emptyMap(),
         blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
-        blindsEnabled: Boolean = true
+        blindsEnabled: Boolean = true,
+        gameStarted: Boolean = false
     ) {
         val message = NetworkMessage.StateSync(
             players = players,
@@ -96,7 +100,8 @@ class LanTableServer(
             transactions = transactions.take(50),
             contributions = contributions,
             blindsState = blindsState,
-            blindsEnabled = blindsEnabled
+            blindsEnabled = blindsEnabled,
+            gameStarted = gameStarted
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -142,6 +147,7 @@ class LanTableServer(
         contributionsProvider: () -> Map<String, Int>,
         blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState,
         blindsEnabledProvider: () -> Boolean,
+        gameStartedProvider: () -> Boolean,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -157,6 +163,10 @@ class LanTableServer(
                     when (msg) {
                         is NetworkMessage.SubmitContribution -> {
                             onEvent(Event.ContributionReceived(msg.playerId, msg.amount))
+                        }
+
+                        is NetworkMessage.ReadyToggle -> {
+                            onEvent(Event.ReadyToggleReceived(msg.playerId, msg.isReady))
                         }
 
                         is NetworkMessage.JoinRequest -> {
@@ -182,7 +192,8 @@ class LanTableServer(
                                 transactions = txProvider().takeLast(50),
                                 contributions = contributionsProvider(),
                                 blindsState = blindsStateProvider(),
-                                blindsEnabled = blindsEnabledProvider()
+                                blindsEnabled = blindsEnabledProvider(),
+                                gameStarted = gameStartedProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                             writer.newLine()
@@ -238,7 +249,8 @@ class LanTableClient(
             val transactions: List<ChipTransaction>,
             val contributions: Map<String, Int> = emptyMap(),
             val blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
-            val blindsEnabled: Boolean = true
+            val blindsEnabled: Boolean = true,
+            val gameStarted: Boolean = false
         ) : Event()
 
         data class Error(val message: String) : Event()
@@ -275,7 +287,8 @@ class LanTableClient(
                                     transactions = msg.transactions,
                                     contributions = msg.contributions,
                                     blindsState = msg.blindsState,
-                                    blindsEnabled = msg.blindsEnabled
+                                    blindsEnabled = msg.blindsEnabled,
+                                    gameStarted = msg.gameStarted
                                 )
                             )
                         }
@@ -298,6 +311,21 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.SubmitContribution(playerId = playerId, amount = amount)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * 客户端发送准备状态到服务端
+     */
+    fun sendReady(playerId: String, isReady: Boolean) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.ReadyToggle(playerId = playerId, isReady = isReady)
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()
