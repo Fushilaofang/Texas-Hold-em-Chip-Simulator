@@ -747,8 +747,10 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(state.logs.takeLast(50).reversed(), key = { it.id }) { tx ->
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
-                    val pName = sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
-                        ?: tx.playerId.take(6)
+                    val pName = tx.playerName.ifBlank {
+                        sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
+                            ?: tx.playerId.take(6)
+                    }
                     val bg = when (tx.type) {
                         com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT -> Color(0xFFE8F5E9)
                         com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION -> Color(0xFFFFF9C4)

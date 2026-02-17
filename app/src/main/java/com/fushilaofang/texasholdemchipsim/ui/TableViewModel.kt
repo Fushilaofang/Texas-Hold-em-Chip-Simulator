@@ -437,7 +437,7 @@ class TableViewModel(
                 player.id to (raw.toIntOrNull() ?: 0)
             }
 
-            val handId = "HAND-${state.handCounter.toString().padStart(4, '0')}"
+            val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
             val result = settlementEngine.settleHandSimple(

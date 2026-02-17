@@ -77,6 +77,7 @@ class SettlementEngine {
 
         // 生成交易记录
         val updatedMap = updatedPlayers.associateBy { it.id }
+        val nameMap = players.associate { it.id to it.name }
         val transactions = buildList {
             normalizedContrib.forEach { (playerId, spent) ->
                 if (spent > 0) {
@@ -86,6 +87,7 @@ class SettlementEngine {
                             timestamp = timestamp,
                             handId = handId,
                             playerId = playerId,
+                            playerName = nameMap[playerId] ?: playerId.take(6),
                             amount = -spent,
                             type = TransactionType.CONTRIBUTION,
                             note = "投入底池",
@@ -102,6 +104,7 @@ class SettlementEngine {
                             timestamp = timestamp,
                             handId = handId,
                             playerId = playerId,
+                            playerName = nameMap[playerId] ?: playerId.take(6),
                             amount = payout,
                             type = TransactionType.WIN_PAYOUT,
                             note = if (sidePots.size > 1) "赢得底池(含边池)" else "赢得底池",

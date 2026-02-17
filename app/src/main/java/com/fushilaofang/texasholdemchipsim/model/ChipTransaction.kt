@@ -8,6 +8,7 @@ data class ChipTransaction(
     val timestamp: Long,
     val handId: String,
     val playerId: String,
+    val playerName: String = "",
     val amount: Int,
     val type: TransactionType,
     val note: String,
