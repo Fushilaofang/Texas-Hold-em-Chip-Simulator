@@ -14,11 +14,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 
 private const val DEFAULT_PORT = 45454
+private const val HEARTBEAT_INTERVAL_MS = 3_000L   // 每 3 秒发一次 ping
+private const val HEARTBEAT_TIMEOUT_MS = 10_000L    // 10 秒无 pong 视为掉线
+private const val DISCONNECT_GRACE_MS = 60_000L     // 掉线后保留 60 秒等待重连
 
 class LanTableServer(
     private val json: Json = Json {
@@ -31,9 +35,15 @@ class LanTableServer(
     private val clients = mutableMapOf<String, ClientConnection>()
     private val clientsLock = Any()
 
+    /** 掉线但尚未超时的玩家，记录掉线时间戳 */
+    private val disconnectedPlayers = mutableMapOf<String, Long>()
+    private val disconnectedLock = Any()
+
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
+        data class PlayerReconnected(val playerId: String) : Event()
+        data class PlayerDropped(val playerId: String) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class Error(val message: String) : Event()
@@ -43,8 +53,12 @@ class LanTableServer(
         val playerId: String,
         val socket: Socket,
         val writer: BufferedWriter,
-        val readerJob: Job
+        val readerJob: Job,
+        @Volatile var lastPongTime: Long = System.currentTimeMillis()
     )
+
+    private var heartbeatJob: Job? = null
+    private var graceCleanupJob: Job? = null
 
     fun start(
         hostPlayersProvider: () -> List<PlayerState>,
@@ -59,6 +73,7 @@ class LanTableServer(
     ) {
         stop()
 
+        // 接受新连接
         scope.launch {
             try {
                 serverSocket = ServerSocket(DEFAULT_PORT)
@@ -81,6 +96,70 @@ class LanTableServer(
                 }
             } catch (ex: Exception) {
                 onEvent(Event.Error("服务端异常: ${ex.message ?: "未知错误"}"))
+            }
+        }
+
+        // 心跳检测循环
+        heartbeatJob = scope.launch {
+            while (isActive) {
+                delay(HEARTBEAT_INTERVAL_MS)
+                val now = System.currentTimeMillis()
+                val pingText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Ping)
+                val stale = mutableListOf<String>()
+
+                synchronized(clientsLock) {
+                    clients.forEach { (id, conn) ->
+                        // 检查是否超时
+                        if (now - conn.lastPongTime > HEARTBEAT_TIMEOUT_MS) {
+                            stale.add(id)
+                        } else {
+                            // 发送 ping
+                            try {
+                                conn.writer.write(pingText)
+                                conn.writer.newLine()
+                                conn.writer.flush()
+                            } catch (_: Exception) {
+                                stale.add(id)
+                            }
+                        }
+                    }
+                    stale.forEach { id ->
+                        val conn = clients.remove(id)
+                        conn?.let {
+                            it.readerJob.cancel()
+                            runCatching { it.socket.close() }
+                        }
+                    }
+                }
+                // 标记为掉线（进入等待重连期）
+                stale.forEach { id ->
+                    synchronized(disconnectedLock) {
+                        disconnectedPlayers[id] = now
+                    }
+                    onEvent(Event.PlayerDisconnected(id))
+                }
+            }
+        }
+
+        // 清理超时的掉线玩家
+        graceCleanupJob = scope.launch {
+            while (isActive) {
+                delay(5_000L)
+                val now = System.currentTimeMillis()
+                val expired = mutableListOf<String>()
+                synchronized(disconnectedLock) {
+                    val iter = disconnectedPlayers.iterator()
+                    while (iter.hasNext()) {
+                        val (id, disconnectTime) = iter.next()
+                        if (now - disconnectTime > DISCONNECT_GRACE_MS) {
+                            iter.remove()
+                            expired.add(id)
+                        }
+                    }
+                }
+                expired.forEach { id ->
+                    onEvent(Event.PlayerDropped(id))
+                }
             }
         }
     }
@@ -117,12 +196,21 @@ class LanTableServer(
                 }
             }
             stale.forEach { id ->
-                clients.remove(id)?.socket?.close()
+                val conn = clients.remove(id)
+                conn?.let {
+                    it.readerJob.cancel()
+                    runCatching { it.socket.close() }
+                }
             }
         }
     }
 
     fun stop() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        graceCleanupJob?.cancel()
+        graceCleanupJob = null
+        synchronized(disconnectedLock) { disconnectedPlayers.clear() }
         synchronized(clientsLock) {
             clients.values.forEach {
                 runCatching { it.socket.close() }
@@ -161,12 +249,81 @@ class LanTableServer(
                     val line = reader.readLine() ?: break
                     val msg = json.decodeFromString(NetworkMessage.serializer(), line)
                     when (msg) {
+                        is NetworkMessage.Pong -> {
+                            // 更新最后心跳时间
+                            val id = assignedId ?: continue
+                            synchronized(clientsLock) {
+                                clients[id]?.lastPongTime = System.currentTimeMillis()
+                            }
+                        }
+
                         is NetworkMessage.SubmitContribution -> {
                             onEvent(Event.ContributionReceived(msg.playerId, msg.amount))
                         }
 
                         is NetworkMessage.ReadyToggle -> {
                             onEvent(Event.ReadyToggleReceived(msg.playerId, msg.isReady))
+                        }
+
+                        is NetworkMessage.Reconnect -> {
+                            val oldId = msg.playerId
+                            // 检查是否在掉线等待列表中
+                            val isWaitingReconnect = synchronized(disconnectedLock) {
+                                disconnectedPlayers.containsKey(oldId)
+                            }
+                            // 也检查是否存在于玩家列表
+                            val existsInPlayers = hostPlayersProvider().any { it.id == oldId }
+
+                            if (isWaitingReconnect || existsInPlayers) {
+                                assignedId = oldId
+                                synchronized(disconnectedLock) { disconnectedPlayers.remove(oldId) }
+
+                                // 发送重连成功
+                                val accepted = NetworkMessage.ReconnectAccepted(playerId = oldId)
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
+                                writer.newLine()
+                                writer.flush()
+
+                                // 发送最新状态
+                                val sync = NetworkMessage.StateSync(
+                                    players = hostPlayersProvider(),
+                                    handCounter = handCounterProvider(),
+                                    transactions = txProvider().takeLast(50),
+                                    contributions = contributionsProvider(),
+                                    blindsState = blindsStateProvider(),
+                                    blindsEnabled = blindsEnabledProvider(),
+                                    gameStarted = gameStartedProvider()
+                                )
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                writer.newLine()
+                                writer.flush()
+
+                                // 更新客户端连接
+                                synchronized(clientsLock) {
+                                    // 关闭旧连接（如有）
+                                    clients.remove(oldId)?.let { old ->
+                                        old.readerJob.cancel()
+                                        runCatching { old.socket.close() }
+                                    }
+                                    clients[oldId] = ClientConnection(
+                                        playerId = oldId,
+                                        socket = socket,
+                                        writer = writer,
+                                        readerJob = this.coroutineContext[Job]
+                                            ?: error("missing coroutine job")
+                                    )
+                                }
+
+                                onEvent(Event.PlayerReconnected(oldId))
+                            } else {
+                                // 找不到该玩家，拒绝重连
+                                val err = NetworkMessage.Error(reason = "重连失败: 找不到玩家记录")
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                writer.newLine()
+                                writer.flush()
+                                socket.close()
+                                return@launch
+                            }
                         }
 
                         is NetworkMessage.JoinRequest -> {
@@ -229,6 +386,10 @@ class LanTableServer(
                 val id = assignedId
                 if (id != null) {
                     synchronized(clientsLock) { clients.remove(id) }
+                    // 掉线进入等待重连期，不立即移除玩家
+                    synchronized(disconnectedLock) {
+                        disconnectedPlayers[id] = System.currentTimeMillis()
+                    }
                     onEvent(Event.PlayerDisconnected(id))
                 }
                 runCatching { socket.close() }
@@ -248,6 +409,15 @@ class LanTableClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var socket: Socket? = null
     private var listenJob: Job? = null
+    private var heartbeatJob: Job? = null
+
+    /** 保存连接信息，用于重连 */
+    private var lastHostIp: String? = null
+    private var lastPlayerName: String? = null
+    private var lastBuyIn: Int = 0
+    private var assignedPlayerId: String? = null
+    private var reconnecting = false
+    private var shouldReconnect = true
 
     sealed class Event {
         data class JoinAccepted(val playerId: String) : Event()
@@ -261,13 +431,36 @@ class LanTableClient(
             val gameStarted: Boolean = false
         ) : Event()
 
+        data class Disconnected(val willReconnect: Boolean) : Event()
+        data class Reconnected(val playerId: String) : Event()
+        data class ReconnectFailed(val reason: String) : Event()
         data class Error(val message: String) : Event()
     }
 
+    @Volatile
     private var writer: BufferedWriter? = null
 
     fun connect(hostIp: String, playerName: String, buyIn: Int, onEvent: (Event) -> Unit) {
         disconnect()
+        lastHostIp = hostIp
+        lastPlayerName = playerName
+        lastBuyIn = buyIn
+        assignedPlayerId = null
+        reconnecting = false
+        shouldReconnect = true
+
+        doConnect(hostIp, playerName, buyIn, isReconnect = false, onEvent = onEvent)
+    }
+
+    private fun doConnect(
+        hostIp: String,
+        playerName: String,
+        buyIn: Int,
+        isReconnect: Boolean,
+        onEvent: (Event) -> Unit
+    ) {
+        listenJob?.cancel()
+        heartbeatJob?.cancel()
 
         listenJob = scope.launch {
             try {
@@ -277,16 +470,54 @@ class LanTableClient(
                 val w = BufferedWriter(OutputStreamWriter(newSocket.getOutputStream()))
                 writer = w
 
-                val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn)
-                w.write(json.encodeToString(NetworkMessage.serializer(), join))
-                w.newLine()
-                w.flush()
+                if (isReconnect && assignedPlayerId != null) {
+                    // 发送重连请求
+                    val reconMsg = NetworkMessage.Reconnect(
+                        playerId = assignedPlayerId!!,
+                        playerName = playerName
+                    )
+                    w.write(json.encodeToString(NetworkMessage.serializer(), reconMsg))
+                    w.newLine()
+                    w.flush()
+                } else {
+                    // 发送首次加入请求
+                    val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn)
+                    w.write(json.encodeToString(NetworkMessage.serializer(), join))
+                    w.newLine()
+                    w.flush()
+                }
+
+                // 启动心跳发送
+                heartbeatJob = scope.launch {
+                    val pingText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Ping)
+                    while (isActive) {
+                        delay(HEARTBEAT_INTERVAL_MS)
+                        try {
+                            val cw = writer ?: break
+                            cw.write(pingText)
+                            cw.newLine()
+                            cw.flush()
+                        } catch (_: Exception) {
+                            break
+                        }
+                    }
+                }
+
+                reconnecting = false
 
                 while (isActive) {
                     val line = reader.readLine() ?: break
                     val msg = json.decodeFromString(NetworkMessage.serializer(), line)
                     when (msg) {
-                        is NetworkMessage.JoinAccepted -> onEvent(Event.JoinAccepted(msg.assignedPlayerId))
+                        is NetworkMessage.JoinAccepted -> {
+                            assignedPlayerId = msg.assignedPlayerId
+                            onEvent(Event.JoinAccepted(msg.assignedPlayerId))
+                        }
+
+                        is NetworkMessage.ReconnectAccepted -> {
+                            onEvent(Event.Reconnected(msg.playerId))
+                        }
+
                         is NetworkMessage.StateSync -> {
                             onEvent(
                                 Event.StateSync(
@@ -301,19 +532,75 @@ class LanTableClient(
                             )
                         }
 
+                        is NetworkMessage.Ping -> {
+                            // 回复 pong
+                            try {
+                                val cw = writer ?: continue
+                                val pongText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Pong)
+                                cw.write(pongText)
+                                cw.newLine()
+                                cw.flush()
+                            } catch (_: Exception) {
+                                break
+                            }
+                        }
+
+                        is NetworkMessage.Pong -> { /* 忽略，保活即可 */ }
+
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
                         else -> Unit
                     }
                 }
-            } catch (ex: Exception) {
-                onEvent(Event.Error("连接失败: ${ex.message ?: "未知错误"}"))
+            } catch (_: Exception) {
+                // 连接断开
+            } finally {
+                heartbeatJob?.cancel()
+                heartbeatJob = null
+                writer = null
+                runCatching { socket?.close() }
+                socket = null
+            }
+
+            // 断线后尝试重连
+            if (shouldReconnect && assignedPlayerId != null && !reconnecting) {
+                reconnecting = true
+                onEvent(Event.Disconnected(willReconnect = true))
+                attemptReconnect(onEvent)
+            } else if (shouldReconnect && assignedPlayerId == null) {
+                onEvent(Event.Disconnected(willReconnect = false))
             }
         }
     }
 
-    /**
-     * 客户端提交本手投入到服务端
-     */
+    private fun attemptReconnect(onEvent: (Event) -> Unit) {
+        val ip = lastHostIp ?: return
+        val name = lastPlayerName ?: return
+
+        scope.launch {
+            var attempt = 0
+            val maxAttempts = 10
+            while (attempt < maxAttempts && shouldReconnect && isActive) {
+                attempt++
+                val delayMs = (2000L * attempt).coerceAtMost(15_000L)
+                onEvent(Event.Error("连接断开，第${attempt}次重连中...（${delayMs / 1000}秒后）"))
+                delay(delayMs)
+
+                if (!shouldReconnect) break
+
+                try {
+                    doConnect(ip, name, lastBuyIn, isReconnect = true, onEvent = onEvent)
+                    return@launch // doConnect 内部会阻塞直到断线
+                } catch (_: Exception) {
+                    // 重连失败，继续
+                }
+            }
+            if (shouldReconnect) {
+                reconnecting = false
+                onEvent(Event.ReconnectFailed("重连失败，已尝试${maxAttempts}次"))
+            }
+        }
+    }
+
     fun sendContribution(playerId: String, amount: Int) {
         scope.launch {
             try {
@@ -326,9 +613,6 @@ class LanTableClient(
         }
     }
 
-    /**
-     * 客户端发送准备状态到服务端
-     */
     fun sendReady(playerId: String, isReady: Boolean) {
         scope.launch {
             try {
@@ -342,6 +626,10 @@ class LanTableClient(
     }
 
     fun disconnect() {
+        shouldReconnect = false
+        reconnecting = false
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         listenJob?.cancel()
         listenJob = null
         writer = null

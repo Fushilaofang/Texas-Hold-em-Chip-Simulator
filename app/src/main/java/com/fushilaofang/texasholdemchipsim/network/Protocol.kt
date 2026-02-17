@@ -58,4 +58,28 @@ sealed class NetworkMessage {
     data class Error(
         val reason: String
     ) : NetworkMessage()
+
+    /** 心跳包（双向） */
+    @Serializable
+    @SerialName("ping")
+    data object Ping : NetworkMessage()
+
+    @Serializable
+    @SerialName("pong")
+    data object Pong : NetworkMessage()
+
+    /** 掉线重连请求（客户端 → 服务端，携带旧playerId） */
+    @Serializable
+    @SerialName("reconnect")
+    data class Reconnect(
+        val playerId: String,
+        val playerName: String
+    ) : NetworkMessage()
+
+    /** 重连成功响应 */
+    @Serializable
+    @SerialName("reconnect_accepted")
+    data class ReconnectAccepted(
+        val playerId: String
+    ) : NetworkMessage()
 }

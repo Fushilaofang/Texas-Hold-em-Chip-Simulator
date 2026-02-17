@@ -226,13 +226,29 @@ class TableViewModel(
                 when (event) {
                     is LanTableServer.Event.Error ->
                         _uiState.update { it.copy(info = event.message) }
-                    is LanTableServer.Event.PlayerDisconnected ->
+                    is LanTableServer.Event.PlayerDisconnected -> {
+                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                        _uiState.update { state ->
+                            state.copy(info = "$pName 掉线，等待重连...")
+                        }
+                        // 不移除玩家，等待重连或超时
+                    }
+                    is LanTableServer.Event.PlayerReconnected -> {
+                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                        _uiState.update { it.copy(info = "$pName 已重连") }
+                        syncToClients()
+                    }
+                    is LanTableServer.Event.PlayerDropped -> {
+                        // 超时未重连，正式移除玩家
+                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
                         _uiState.update { state ->
                             state.copy(
                                 players = state.players.filter { it.id != event.playerId },
-                                info = "玩家离线"
+                                info = "$pName 掉线超时，已移除"
                             )
                         }
+                        syncToClients()
+                    }
                     is LanTableServer.Event.ContributionReceived -> {
                         _uiState.update { state ->
                             val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
@@ -312,6 +328,19 @@ class TableViewModel(
                 }
                 is LanTableClient.Event.Error ->
                     _uiState.update { it.copy(info = event.message) }
+                is LanTableClient.Event.Disconnected -> {
+                    if (event.willReconnect) {
+                        _uiState.update { it.copy(info = "连接断开，正在尝试重连...") }
+                    } else {
+                        _uiState.update { it.copy(info = "连接断开") }
+                    }
+                }
+                is LanTableClient.Event.Reconnected -> {
+                    _uiState.update { it.copy(info = "重连成功") }
+                }
+                is LanTableClient.Event.ReconnectFailed -> {
+                    _uiState.update { it.copy(info = event.reason) }
+                }
             }
         }
     }
