@@ -569,10 +569,10 @@ class LanTableClient(
 
         scope.launch {
             var attempt = 0
-            val maxAttempts = 10
+            val maxAttempts = 9999
             while (attempt < maxAttempts && shouldReconnect && isActive) {
                 attempt++
-                val delayMs = (2000L * attempt).coerceAtMost(15_000L)
+                val delayMs = (2000L * attempt).coerceAtMost(10_000L)
                 onEvent(Event.Error("连接断开，第${attempt}次重连中...（${delayMs / 1000}秒后）"))
                 delay(delayMs)
 

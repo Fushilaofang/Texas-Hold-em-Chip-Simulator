@@ -21,13 +21,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -37,7 +35,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -119,25 +116,24 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // 房主掉线弹窗（仅客户端显示）
-                if (state.showHostReconnectingDialog) {
-                    AlertDialog(
-                        onDismissRequest = { /* 不允许点外部关闭 */ },
-                        title = { Text("房主掉线") },
+                // 等待房主重连弹窗
+                if (state.waitingForHostReconnect) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { /* 不允许点击外部关闭 */ },
+                        title = { Text("连接中断", fontWeight = FontWeight.Bold) },
                         text = {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                CircularProgressIndicator()
-                                Text("正在等待房主重连，请稍候...",
-                                    textAlign = TextAlign.Center)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("正在等待房主重连……", fontSize = 16.sp)
+                                Spacer(Modifier.height(8.dp))
+                                Text("系统会自动重新连接，请耐心等待", fontSize = 13.sp, color = Color.Gray)
                             }
                         },
-                        confirmButton = {},
-                        dismissButton = {
-                            TextButton(onClick = vm::goHome) {
-                                Text("离开游戏", color = Color.Red)
+                        confirmButton = {
+                            Button(
+                                onClick = { vm.goHome() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                            ) {
+                                Text("退出房间")
                             }
                         }
                     )
