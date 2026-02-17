@@ -330,6 +330,9 @@ class TableViewModel(
 
     fun toggleBlinds(enabled: Boolean) {
         _uiState.update { it.copy(blindsEnabled = enabled) }
+        if (_uiState.value.mode == TableMode.HOST) {
+            syncToClients()
+        }
     }
 
     // ==================== 准备 / 开始游戏 ====================
