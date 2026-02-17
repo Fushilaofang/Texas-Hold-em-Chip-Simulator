@@ -292,6 +292,15 @@ class TableViewModel(
                 return
             }
 
+            // 盲注规则校验
+            if (state.blindsEnabled && state.players.size >= 2) {
+                val blindsViolations = validateBlinds(state)
+                if (blindsViolations.isNotEmpty()) {
+                    _uiState.update { it.copy(info = "盲注校验失败: ${blindsViolations.joinToString("; ")}") }
+                    return
+                }
+            }
+
             val contributions = state.players.associate { player ->
                 val raw = state.contributionInputs[player.id].orEmpty()
                 player.id to (raw.toIntOrNull() ?: 0)
@@ -414,6 +423,15 @@ class TableViewModel(
         val selfId = state.selfId
         if (selfId.isBlank()) return
 
+        // 盲注规则校验
+        if (state.blindsEnabled && state.players.size >= 2 && amount > 0) {
+            val minRequired = getMinContribution(selfId)
+            if (amount < minRequired) {
+                _uiState.update { it.copy(info = "投入不足: 最低需要 $minRequired") }
+                return
+            }
+        }
+
         if (state.mode == TableMode.HOST) {
             // 房主直接更新本地
             _uiState.update {
@@ -432,6 +450,64 @@ class TableViewModel(
                     info = "已提交投入: $amount"
                 )
             }
+        }
+    }
+
+    /**
+     * 盲注规则校验：
+     * - 小盲位投入 >= 小盲额（或 all-in）
+     * - 大盲位投入 >= 大盲额（或 all-in）
+     * - 其他参与玩家投入 >= 大盲额（或 all-in）或为 0（弃牌）
+     */
+    private fun validateBlinds(state: TableUiState): List<String> {
+        val sortedPlayers = state.players.sortedBy { it.seatOrder }
+        val blinds = state.blindsState
+        val violations = mutableListOf<String>()
+
+        sortedPlayers.forEachIndexed { index, player ->
+            val contrib = state.contributionInputs[player.id]?.toIntOrNull() ?: 0
+            when (index) {
+                blinds.smallBlindIndex -> {
+                    val required = minOf(blinds.config.smallBlind, player.chips + contrib)
+                    if (contrib < required) {
+                        violations.add("${player.name}(小盲)投入${contrib}不足，至少需要${required}")
+                    }
+                }
+                blinds.bigBlindIndex -> {
+                    val required = minOf(blinds.config.bigBlind, player.chips + contrib)
+                    if (contrib < required) {
+                        violations.add("${player.name}(大盲)投入${contrib}不足，至少需要${required}")
+                    }
+                }
+                else -> {
+                    if (contrib > 0) {
+                        val required = minOf(blinds.config.bigBlind, player.chips + contrib)
+                        if (contrib < required) {
+                            violations.add("${player.name}投入${contrib}不足，跟注至少需要${required}")
+                        }
+                    }
+                }
+            }
+        }
+        return violations
+    }
+
+    /**
+     * 获取玩家的最低投入要求（盲注开启时使用）
+     */
+    fun getMinContribution(playerId: String): Int {
+        val state = _uiState.value
+        if (!state.blindsEnabled || state.players.size < 2) return 0
+        val sortedPlayers = state.players.sortedBy { it.seatOrder }
+        val blinds = state.blindsState
+        val index = sortedPlayers.indexOfFirst { it.id == playerId }
+        if (index < 0) return 0
+        val player = sortedPlayers[index]
+        val currentContrib = state.contributionInputs[playerId]?.toIntOrNull() ?: 0
+        return when (index) {
+            blinds.smallBlindIndex -> minOf(blinds.config.smallBlind, player.chips + currentContrib)
+            blinds.bigBlindIndex -> minOf(blinds.config.bigBlind, player.chips + currentContrib)
+            else -> 0 // 非盲注位可以弃牌（投入0）
         }
     }
 

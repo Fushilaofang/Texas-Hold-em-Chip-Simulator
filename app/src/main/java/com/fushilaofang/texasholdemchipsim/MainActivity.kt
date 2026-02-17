@@ -79,7 +79,8 @@ class MainActivity : ComponentActivity() {
                     onRoomNameChange = vm::saveRoomName,
                     onBuyInChange = vm::saveBuyIn,
                     onSmallBlindChange = vm::saveSmallBlind,
-                    onBigBlindChange = vm::saveBigBlind
+                    onBigBlindChange = vm::saveBigBlind,
+                    getMinContribution = vm::getMinContribution
                 )
             }
         }
@@ -104,7 +105,8 @@ private fun TableScreen(
     onRoomNameChange: (String) -> Unit,
     onBuyInChange: (Int) -> Unit,
     onSmallBlindChange: (Int) -> Unit,
-    onBigBlindChange: (Int) -> Unit
+    onBigBlindChange: (Int) -> Unit,
+    getMinContribution: (String) -> Int
 ) {
     // 从持久化状态初始化，用户编辑时同步回写
     var roomName by remember(state.savedRoomName) { mutableStateOf(state.savedRoomName) }
@@ -298,6 +300,14 @@ private fun TableScreen(
                             Text("已提交投入: $submittedAmount", fontSize = 12.sp, color = Color(0xFF388E3C))
                         } else {
                             Text("未提交投入", fontSize = 12.sp, color = Color.Gray)
+                        }
+
+                        // 盲注开启时显示最低投入要求
+                        if (state.blindsEnabled && state.players.size >= 2) {
+                            val minContrib = getMinContribution(player.id)
+                            if (minContrib > 0) {
+                                Text("最低投入: $minContrib", fontSize = 11.sp, color = Color(0xFFE65100))
+                            }
                         }
 
                         // 只有自己能编辑自己的投入
