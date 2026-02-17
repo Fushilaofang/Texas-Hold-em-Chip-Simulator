@@ -78,7 +78,8 @@ class MainActivity : ComponentActivity() {
                         onNavigateCreate = { vm.navigateTo(ScreenState.CREATE_ROOM) },
                         onNavigateJoin = { vm.navigateTo(ScreenState.JOIN_ROOM) },
                         onPlayerNameChange = vm::savePlayerName,
-                        onBuyInChange = vm::saveBuyIn
+                        onBuyInChange = vm::saveBuyIn,
+                        onRejoin = vm::rejoinSession
                     )
                     ScreenState.CREATE_ROOM -> CreateRoomScreen(
                         state = state,
@@ -127,7 +128,8 @@ private fun HomeScreen(
     onNavigateCreate: () -> Unit,
     onNavigateJoin: () -> Unit,
     onPlayerNameChange: (String) -> Unit,
-    onBuyInChange: (Int) -> Unit
+    onBuyInChange: (Int) -> Unit,
+    onRejoin: () -> Unit
 ) {
     var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
@@ -180,6 +182,20 @@ private fun HomeScreen(
                 .height(56.dp)
         ) {
             Text("加入房间", fontSize = 18.sp)
+        }
+
+        if (state.canRejoin) {
+            Spacer(Modifier.height(16.dp))
+            val modeLabel = if (state.lastSessionMode == TableMode.HOST) "房主" else "玩家"
+            Button(
+                onClick = onRejoin,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800))
+            ) {
+                Text("重新加入「${state.lastSessionTableName}」($modeLabel)", fontSize = 16.sp)
+            }
         }
     }
 }

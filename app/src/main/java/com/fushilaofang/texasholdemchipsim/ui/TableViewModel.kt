@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 enum class TableMode {
     IDLE,
@@ -64,6 +66,10 @@ data class TableUiState(
     val lastSidePots: List<SidePot> = emptyList(),
     // --- 掉线玩家 ---
     val disconnectedPlayerIds: Set<String> = emptySet(),
+    // --- 重新加入 ---
+    val canRejoin: Boolean = false,
+    val lastSessionTableName: String = "",
+    val lastSessionMode: TableMode = TableMode.IDLE,
     // --- 房间发现 ---
     val isScanning: Boolean = false,
     val discoveredRooms: List<DiscoveredRoom> = emptyList(),
@@ -87,6 +93,7 @@ class TableViewModel(
     private val roomScanner = RoomScanner()
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("user_settings", Context.MODE_PRIVATE)
+    private val sessionJson = Json { ignoreUnknownKeys = true }
 
     private val _uiState = MutableStateFlow(
         TableUiState(
@@ -99,6 +106,10 @@ class TableViewModel(
         )
     )
     val uiState: StateFlow<TableUiState> = _uiState.asStateFlow()
+
+    init {
+        loadSessionInfo()
+    }
 
     // ==================== 用户设置持久化 ====================
 
@@ -119,11 +130,13 @@ class TableViewModel(
     }
 
     fun goHome() {
-        // 断开连接，回到首页
-        roomAdvertiser.close()
-        roomScanner.close()
-        server.close()
-        client.close()
+        // 保存会话信息以便后续重连
+        saveSession()
+        // 断开连接，回到首页（使用 stop/disconnect 而非 close，保留 scope 以便重连）
+        roomAdvertiser.stopBroadcast()
+        roomScanner.stopScan()
+        server.stop()
+        client.disconnect()
         _uiState.update {
             it.copy(
                 mode = TableMode.IDLE,
@@ -133,6 +146,7 @@ class TableViewModel(
                 selfId = "",
                 isScanning = false,
                 discoveredRooms = emptyList(),
+                disconnectedPlayerIds = emptySet(),
                 info = "准备开始"
             )
         }
@@ -175,6 +189,7 @@ class TableViewModel(
     // ==================== 开桌 / 加入 ====================
 
     fun hostTable(roomName: String, hostName: String, buyIn: Int, blindsConfig: BlindsConfig = BlindsConfig()) {
+        clearSession()
         val hostId = UUID.randomUUID().toString()
         val hostPlayer = PlayerState(
             id = hostId,
@@ -203,93 +218,20 @@ class TableViewModel(
                 gameStarted = false,
                 isScanning = false,
                 discoveredRooms = emptyList(),
+                canRejoin = false,
                 info = "已创建房间「${roomName.ifBlank { "家庭牌局" }}」| 等待玩家加入并准备"
             )
         }
 
-        // 启动 TCP 服务
-        server.start(
-            hostPlayersProvider = { _uiState.value.players },
-            handCounterProvider = { _uiState.value.handCounter },
-            txProvider = { _uiState.value.logs },
-            contributionsProvider = {
-                _uiState.value.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
-            },
-            blindsStateProvider = { _uiState.value.blindsState },
-            blindsEnabledProvider = { _uiState.value.blindsEnabled },
-            gameStartedProvider = { _uiState.value.gameStarted },
-            onPlayerJoined = { player ->
-                _uiState.update { state ->
-                    state.copy(players = state.players + player, info = "${player.name} 已加入房间")
-                }
-                syncToClients()
-            },
-            onEvent = { event ->
-                when (event) {
-                    is LanTableServer.Event.Error ->
-                        _uiState.update { it.copy(info = event.message) }
-                    is LanTableServer.Event.PlayerDisconnected -> {
-                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                        _uiState.update { state ->
-                            state.copy(
-                                disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
-                                info = "$pName 掉线，等待重连..."
-                            )
-                        }
-                        // 不移除玩家，等待重连或超时
-                    }
-                    is LanTableServer.Event.PlayerReconnected -> {
-                        val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                        _uiState.update { state ->
-                            state.copy(
-                                disconnectedPlayerIds = state.disconnectedPlayerIds - event.playerId,
-                                info = "$pName 已重连"
-                            )
-                        }
-                        syncToClients()
-                    }
-                    is LanTableServer.Event.ContributionReceived -> {
-                        _uiState.update { state ->
-                            val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
-                            val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
-                            state.copy(
-                                contributionInputs = newInputs,
-                                info = "$playerName 提交投入: ${event.amount}"
-                            )
-                        }
-                        syncToClients()
-                    }
-                    is LanTableServer.Event.ReadyToggleReceived -> {
-                        _uiState.update { state ->
-                            val updatedPlayers = state.players.map {
-                                if (it.id == event.playerId) it.copy(isReady = event.isReady) else it
-                            }
-                            val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                            state.copy(
-                                players = updatedPlayers,
-                                info = "$playerName ${if (event.isReady) "已准备" else "取消准备"}"
-                            )
-                        }
-                        syncToClients()
-                    }
-                    else -> Unit
-                }
-            }
-        )
-
-        // 启动 UDP 广播让其他玩家发现
-        roomAdvertiser.startBroadcast(
-            roomName = _uiState.value.tableName,
-            tcpPort = 45454,
-            hostName = hostPlayer.name,
-            playerCountProvider = { _uiState.value.players.size }
-        )
+        startServer()
+        startAdvertiser()
     }
 
     /**
      * 通过选择已发现的房间加入
      */
     fun joinRoom(room: DiscoveredRoom, playerName: String, buyIn: Int) {
+        clearSession()
         stopRoomScan()
         _uiState.update {
             it.copy(
@@ -301,47 +243,12 @@ class TableViewModel(
                 gameStarted = false,
                 isScanning = false,
                 discoveredRooms = emptyList(),
+                canRejoin = false,
                 info = "正在加入「${room.roomName}」..."
             )
         }
 
-        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn) { event ->
-            when (event) {
-                is LanTableClient.Event.JoinAccepted ->
-                    _uiState.update { it.copy(selfId = event.playerId, info = "已加入「${room.roomName}」") }
-                is LanTableClient.Event.StateSync -> {
-                    _uiState.update {
-                        val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
-                        it.copy(
-                            screen = newScreen,
-                            players = event.players,
-                            handCounter = event.handCounter,
-                            logs = event.transactions.takeLast(200),
-                            contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
-                            blindsState = event.blindsState,
-                            blindsEnabled = event.blindsEnabled,
-                            gameStarted = event.gameStarted,
-                            info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
-                        )
-                    }
-                }
-                is LanTableClient.Event.Error ->
-                    _uiState.update { it.copy(info = event.message) }
-                is LanTableClient.Event.Disconnected -> {
-                    if (event.willReconnect) {
-                        _uiState.update { it.copy(info = "连接断开，正在尝试重连...") }
-                    } else {
-                        _uiState.update { it.copy(info = "连接断开") }
-                    }
-                }
-                is LanTableClient.Event.Reconnected -> {
-                    _uiState.update { it.copy(info = "重连成功") }
-                }
-                is LanTableClient.Event.ReconnectFailed -> {
-                    _uiState.update { it.copy(info = event.reason) }
-                }
-            }
-        }
+        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, ::handleClientEvent)
     }
 
     // ==================== 盲注 ====================
@@ -439,6 +346,7 @@ class TableViewModel(
             )
         }
         syncToClients()
+        saveSession()
     }
 
     /**
@@ -558,6 +466,7 @@ class TableViewModel(
         }
 
         syncToClients()
+        saveSession()
     }
 
     // ==================== 投入 / 赢家 ====================
@@ -680,6 +589,271 @@ class TableViewModel(
                     gameStarted = state.gameStarted
                 )
             }
+        }
+    }
+
+    // ==================== 提取的服务端/客户端事件处理 ====================
+
+    /** 启动 TCP 服务端 */
+    private fun startServer() {
+        server.start(
+            hostPlayersProvider = { _uiState.value.players },
+            handCounterProvider = { _uiState.value.handCounter },
+            txProvider = { _uiState.value.logs },
+            contributionsProvider = {
+                _uiState.value.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
+            },
+            blindsStateProvider = { _uiState.value.blindsState },
+            blindsEnabledProvider = { _uiState.value.blindsEnabled },
+            gameStartedProvider = { _uiState.value.gameStarted },
+            onPlayerJoined = { player ->
+                _uiState.update { state ->
+                    state.copy(players = state.players + player, info = "${player.name} 已加入房间")
+                }
+                syncToClients()
+                saveSession()
+            },
+            onEvent = ::handleServerEvent
+        )
+    }
+
+    /** 启动 UDP 广播 */
+    private fun startAdvertiser() {
+        roomAdvertiser.startBroadcast(
+            roomName = _uiState.value.tableName,
+            tcpPort = 45454,
+            hostName = _uiState.value.selfName,
+            playerCountProvider = { _uiState.value.players.size }
+        )
+    }
+
+    private fun handleServerEvent(event: LanTableServer.Event) {
+        when (event) {
+            is LanTableServer.Event.Error ->
+                _uiState.update { it.copy(info = event.message) }
+            is LanTableServer.Event.PlayerDisconnected -> {
+                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                _uiState.update { state ->
+                    state.copy(
+                        disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
+                        info = "$pName 掉线，等待重连..."
+                    )
+                }
+            }
+            is LanTableServer.Event.PlayerReconnected -> {
+                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                _uiState.update { state ->
+                    state.copy(
+                        disconnectedPlayerIds = state.disconnectedPlayerIds - event.playerId,
+                        info = "$pName 已重连"
+                    )
+                }
+                syncToClients()
+            }
+            is LanTableServer.Event.ContributionReceived -> {
+                _uiState.update { state ->
+                    val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
+                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
+                    state.copy(
+                        contributionInputs = newInputs,
+                        info = "$playerName 提交投入: ${event.amount}"
+                    )
+                }
+                syncToClients()
+            }
+            is LanTableServer.Event.ReadyToggleReceived -> {
+                _uiState.update { state ->
+                    val updatedPlayers = state.players.map {
+                        if (it.id == event.playerId) it.copy(isReady = event.isReady) else it
+                    }
+                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                    state.copy(
+                        players = updatedPlayers,
+                        info = "$playerName ${if (event.isReady) "已准备" else "取消准备"}"
+                    )
+                }
+                syncToClients()
+            }
+            else -> Unit
+        }
+    }
+
+    private fun handleClientEvent(event: LanTableClient.Event) {
+        when (event) {
+            is LanTableClient.Event.JoinAccepted -> {
+                _uiState.update { it.copy(selfId = event.playerId, info = "已加入「${_uiState.value.tableName}」") }
+                saveSession()
+            }
+            is LanTableClient.Event.StateSync -> {
+                _uiState.update {
+                    val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
+                    it.copy(
+                        screen = newScreen,
+                        players = event.players,
+                        handCounter = event.handCounter,
+                        logs = event.transactions.takeLast(200),
+                        contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
+                        blindsState = event.blindsState,
+                        blindsEnabled = event.blindsEnabled,
+                        gameStarted = event.gameStarted,
+                        info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
+                    )
+                }
+                saveSession()
+            }
+            is LanTableClient.Event.Error ->
+                _uiState.update { it.copy(info = event.message) }
+            is LanTableClient.Event.Disconnected -> {
+                if (event.willReconnect) {
+                    _uiState.update { it.copy(info = "连接断开，正在尝试重连...") }
+                } else {
+                    _uiState.update { it.copy(info = "连接断开") }
+                }
+            }
+            is LanTableClient.Event.Reconnected -> {
+                _uiState.update { it.copy(info = "重连成功") }
+            }
+            is LanTableClient.Event.ReconnectFailed -> {
+                _uiState.update { it.copy(info = event.reason) }
+            }
+        }
+    }
+
+    // ==================== 会话持久化 ====================
+
+    private fun saveSession() {
+        val state = _uiState.value
+        if (state.mode == TableMode.IDLE) return
+        prefs.edit().apply {
+            putString("session_mode", state.mode.name)
+            putString("session_self_id", state.selfId)
+            putString("session_self_name", state.selfName)
+            putString("session_table_name", state.tableName)
+            putString("session_host_ip", state.hostIp)
+            putBoolean("session_game_started", state.gameStarted)
+            putInt("session_hand_counter", state.handCounter)
+            putBoolean("session_blinds_enabled", state.blindsEnabled)
+            putString("session_players", sessionJson.encodeToString(state.players))
+            putString("session_blinds_state", sessionJson.encodeToString(state.blindsState))
+            putString("session_contributions", sessionJson.encodeToString(state.contributionInputs))
+            putString("session_blind_contribs", sessionJson.encodeToString(state.blindContributions))
+            apply()
+        }
+    }
+
+    private fun clearSession() {
+        val keys = listOf(
+            "session_mode", "session_self_id", "session_self_name", "session_table_name",
+            "session_host_ip", "session_game_started", "session_hand_counter",
+            "session_blinds_enabled", "session_players", "session_blinds_state",
+            "session_contributions", "session_blind_contribs"
+        )
+        prefs.edit().apply {
+            keys.forEach { remove(it) }
+            apply()
+        }
+        _uiState.update { it.copy(canRejoin = false, lastSessionTableName = "", lastSessionMode = TableMode.IDLE) }
+    }
+
+    private fun loadSessionInfo() {
+        val modeStr = prefs.getString("session_mode", null) ?: return
+        val mode = try { TableMode.valueOf(modeStr) } catch (_: Exception) { return }
+        if (mode == TableMode.IDLE) return
+        val tableName = prefs.getString("session_table_name", "") ?: ""
+        _uiState.update { it.copy(canRejoin = true, lastSessionTableName = tableName, lastSessionMode = mode) }
+    }
+
+    // ==================== 重新加入会话 ====================
+
+    fun rejoinSession() {
+        val modeStr = prefs.getString("session_mode", null) ?: return
+        val mode = try { TableMode.valueOf(modeStr) } catch (_: Exception) { return }
+
+        val selfId = prefs.getString("session_self_id", "") ?: ""
+        val selfName = prefs.getString("session_self_name", "") ?: ""
+        val tableName = prefs.getString("session_table_name", "") ?: ""
+        val hostIp = prefs.getString("session_host_ip", "") ?: ""
+        val gameStarted = prefs.getBoolean("session_game_started", false)
+        val handCounter = prefs.getInt("session_hand_counter", 1)
+        val blindsEnabled = prefs.getBoolean("session_blinds_enabled", true)
+
+        val players: List<PlayerState> = try {
+            val s = prefs.getString("session_players", "[]") ?: "[]"
+            sessionJson.decodeFromString(s)
+        } catch (_: Exception) { emptyList() }
+
+        val blindsState: BlindsState = try {
+            val s = prefs.getString("session_blinds_state", null)
+            s?.let { sessionJson.decodeFromString(it) } ?: BlindsState()
+        } catch (_: Exception) { BlindsState() }
+
+        val contributions: Map<String, String> = try {
+            val s = prefs.getString("session_contributions", "{}") ?: "{}"
+            sessionJson.decodeFromString(s)
+        } catch (_: Exception) { emptyMap() }
+
+        val blindContributions: Map<String, Int> = try {
+            val s = prefs.getString("session_blind_contribs", "{}") ?: "{}"
+            sessionJson.decodeFromString(s)
+        } catch (_: Exception) { emptyMap() }
+
+        if (mode == TableMode.HOST) {
+            // 房主重新加入：恢复状态 + 重启服务端 + 重启广播
+            _uiState.update {
+                it.copy(
+                    mode = TableMode.HOST,
+                    screen = if (gameStarted) ScreenState.GAME else ScreenState.LOBBY,
+                    tableName = tableName,
+                    selfId = selfId,
+                    selfName = selfName,
+                    players = players,
+                    handCounter = handCounter,
+                    gameStarted = gameStarted,
+                    blindsState = blindsState,
+                    blindsEnabled = blindsEnabled,
+                    contributionInputs = contributions,
+                    blindContributions = blindContributions,
+                    selectedWinnerIds = emptySet(),
+                    lastSidePots = emptyList(),
+                    canRejoin = false,
+                    // 标记所有非房主玩家为掉线
+                    disconnectedPlayerIds = players.filter { p -> p.id != selfId }.map { p -> p.id }.toSet(),
+                    info = "正在恢复牌局..."
+                )
+            }
+
+            startServer()
+            startAdvertiser()
+
+            _uiState.update { it.copy(info = "牌局已恢复，等待玩家重连...") }
+        } else {
+            // 客户端重新加入：恢复基本状态 + 发送重连请求
+            if (selfId.isBlank() || hostIp.isBlank()) {
+                clearSession()
+                _uiState.update { it.copy(info = "会话信息不完整，无法重连") }
+                return
+            }
+
+            _uiState.update {
+                it.copy(
+                    mode = TableMode.CLIENT,
+                    screen = if (gameStarted) ScreenState.GAME else ScreenState.LOBBY,
+                    tableName = tableName,
+                    selfId = selfId,
+                    selfName = selfName,
+                    hostIp = hostIp,
+                    players = players,
+                    handCounter = handCounter,
+                    gameStarted = gameStarted,
+                    blindsState = blindsState,
+                    blindsEnabled = blindsEnabled,
+                    contributionInputs = contributions,
+                    canRejoin = false,
+                    info = "正在重连到「$tableName」..."
+                )
+            }
+
+            client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, ::handleClientEvent)
         }
     }
 

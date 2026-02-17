@@ -73,7 +73,10 @@ class LanTableServer(
         // 接受新连接
         scope.launch {
             try {
-                serverSocket = ServerSocket(DEFAULT_PORT)
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(java.net.InetSocketAddress(DEFAULT_PORT))
+                serverSocket = ss
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
                     launch {
@@ -587,6 +590,20 @@ class LanTableClient(
                 onEvent(Event.ReconnectFailed("重连失败，已尝试${maxAttempts}次"))
             }
         }
+    }
+
+    /**
+     * 从首页手动重连（已有 playerId，发送 Reconnect 消息）
+     */
+    fun reconnect(hostIp: String, playerId: String, playerName: String, buyIn: Int, onEvent: (Event) -> Unit) {
+        disconnect()
+        lastHostIp = hostIp
+        lastPlayerName = playerName
+        lastBuyIn = buyIn
+        assignedPlayerId = playerId
+        reconnecting = false
+        shouldReconnect = true
+        doConnect(hostIp, playerName, buyIn, isReconnect = true, onEvent = onEvent)
     }
 
     fun sendContribution(playerId: String, amount: Int) {
