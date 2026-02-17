@@ -170,6 +170,9 @@ class TableViewModel(
             hostPlayersProvider = { _uiState.value.players },
             handCounterProvider = { _uiState.value.handCounter },
             txProvider = { _uiState.value.logs },
+            contributionsProvider = {
+                _uiState.value.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
+            },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -461,7 +464,9 @@ class TableViewModel(
         val state = _uiState.value
         if (state.mode == TableMode.HOST) {
             val contribs = state.contributionInputs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
-            server.broadcastState(state.players, state.handCounter, state.logs, contribs)
+            viewModelScope.launch(Dispatchers.IO) {
+                server.broadcastState(state.players, state.handCounter, state.logs, contribs)
+            }
         }
     }
 

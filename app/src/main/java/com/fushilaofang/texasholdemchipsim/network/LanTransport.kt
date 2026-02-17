@@ -29,6 +29,7 @@ class LanTableServer(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var serverSocket: ServerSocket? = null
     private val clients = mutableMapOf<String, ClientConnection>()
+    private val clientsLock = Any()
 
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
@@ -48,6 +49,7 @@ class LanTableServer(
         hostPlayersProvider: () -> List<PlayerState>,
         handCounterProvider: () -> Int,
         txProvider: () -> List<ChipTransaction>,
+        contributionsProvider: () -> Map<String, Int> = { emptyMap() },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -64,6 +66,7 @@ class LanTableServer(
                             hostPlayersProvider = hostPlayersProvider,
                             handCounterProvider = handCounterProvider,
                             txProvider = txProvider,
+                            contributionsProvider = contributionsProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
                         )
@@ -85,26 +88,30 @@ class LanTableServer(
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
 
-        clients.forEach { (id, conn) ->
-            try {
-                conn.writer.write(text)
-                conn.writer.newLine()
-                conn.writer.flush()
-            } catch (_: Exception) {
-                stale.add(id)
+        synchronized(clientsLock) {
+            clients.forEach { (id, conn) ->
+                try {
+                    conn.writer.write(text)
+                    conn.writer.newLine()
+                    conn.writer.flush()
+                } catch (_: Exception) {
+                    stale.add(id)
+                }
             }
-        }
-        stale.forEach { id ->
-            clients.remove(id)?.socket?.close()
+            stale.forEach { id ->
+                clients.remove(id)?.socket?.close()
+            }
         }
     }
 
     fun stop() {
-        clients.values.forEach {
-            runCatching { it.socket.close() }
-            it.readerJob.cancel()
+        synchronized(clientsLock) {
+            clients.values.forEach {
+                runCatching { it.socket.close() }
+                it.readerJob.cancel()
+            }
+            clients.clear()
         }
-        clients.clear()
         runCatching { serverSocket?.close() }
         serverSocket = null
     }
@@ -119,6 +126,7 @@ class LanTableServer(
         hostPlayersProvider: () -> List<PlayerState>,
         handCounterProvider: () -> Int,
         txProvider: () -> List<ChipTransaction>,
+        contributionsProvider: () -> Map<String, Int>,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -147,13 +155,6 @@ class LanTableServer(
                                 seatOrder = seatOrder
                             )
                             onPlayerJoined(joined)
-                            clients[playerId] = ClientConnection(
-                                playerId = playerId,
-                                socket = socket,
-                                writer = writer,
-                                readerJob = this.coroutineContext[Job]
-                                    ?: error("missing coroutine job")
-                            )
 
                             val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = playerId)
                             writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
@@ -163,11 +164,22 @@ class LanTableServer(
                             val sync = NetworkMessage.StateSync(
                                 players = hostPlayersProvider(),
                                 handCounter = handCounterProvider(),
-                                transactions = txProvider().takeLast(50)
+                                transactions = txProvider().takeLast(50),
+                                contributions = contributionsProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                             writer.newLine()
                             writer.flush()
+
+                            synchronized(clientsLock) {
+                                clients[playerId] = ClientConnection(
+                                    playerId = playerId,
+                                    socket = socket,
+                                    writer = writer,
+                                    readerJob = this.coroutineContext[Job]
+                                        ?: error("missing coroutine job")
+                                )
+                            }
 
                             onEvent(Event.PlayerJoined(joined))
                         }
@@ -180,7 +192,7 @@ class LanTableServer(
             } finally {
                 val id = assignedId
                 if (id != null) {
-                    clients.remove(id)
+                    synchronized(clientsLock) { clients.remove(id) }
                     onEvent(Event.PlayerDisconnected(id))
                 }
                 runCatching { socket.close() }
