@@ -11,8 +11,11 @@ import com.fushilaofang.texasholdemchipsim.data.TransactionRepository
 import com.fushilaofang.texasholdemchipsim.model.ChipTransaction
 import com.fushilaofang.texasholdemchipsim.model.PlayerState
 import com.fushilaofang.texasholdemchipsim.model.TransactionType
+import com.fushilaofang.texasholdemchipsim.network.DiscoveredRoom
 import com.fushilaofang.texasholdemchipsim.network.LanTableClient
 import com.fushilaofang.texasholdemchipsim.network.LanTableServer
+import com.fushilaofang.texasholdemchipsim.network.RoomAdvertiser
+import com.fushilaofang.texasholdemchipsim.network.RoomScanner
 import com.fushilaofang.texasholdemchipsim.settlement.SettlementEngine
 import com.fushilaofang.texasholdemchipsim.settlement.SidePot
 import java.util.UUID
@@ -46,7 +49,10 @@ data class TableUiState(
     val blindsEnabled: Boolean = true,
     val blindContributions: Map<String, Int> = emptyMap(),
     // --- 边池 ---
-    val lastSidePots: List<SidePot> = emptyList()
+    val lastSidePots: List<SidePot> = emptyList(),
+    // --- 房间发现 ---
+    val isScanning: Boolean = false,
+    val discoveredRooms: List<DiscoveredRoom> = emptyList()
 )
 
 class TableViewModel(
@@ -57,15 +63,36 @@ class TableViewModel(
     private val repository = TransactionRepository(context.applicationContext)
     private val server = LanTableServer()
     private val client = LanTableClient()
+    private val roomAdvertiser = RoomAdvertiser()
+    private val roomScanner = RoomScanner()
 
     private val _uiState = MutableStateFlow(
         TableUiState(logs = repository.load().takeLast(200))
     )
     val uiState: StateFlow<TableUiState> = _uiState.asStateFlow()
 
+    // ==================== 房间发现 ====================
+
+    fun startRoomScan() {
+        _uiState.update { it.copy(isScanning = true, discoveredRooms = emptyList(), info = "正在搜索局域网房间...") }
+        roomScanner.startScan { rooms ->
+            _uiState.update { state ->
+                state.copy(
+                    discoveredRooms = rooms,
+                    info = if (rooms.isEmpty()) "搜索中，暂未发现房间..." else "发现 ${rooms.size} 个房间"
+                )
+            }
+        }
+    }
+
+    fun stopRoomScan() {
+        roomScanner.stopScan()
+        _uiState.update { it.copy(isScanning = false) }
+    }
+
     // ==================== 开桌 / 加入 ====================
 
-    fun hostTable(tableName: String, hostName: String, buyIn: Int, blindsConfig: BlindsConfig = BlindsConfig()) {
+    fun hostTable(roomName: String, hostName: String, buyIn: Int, blindsConfig: BlindsConfig = BlindsConfig()) {
         val hostId = UUID.randomUUID().toString()
         val hostPlayer = PlayerState(
             id = hostId,
@@ -78,7 +105,7 @@ class TableViewModel(
         _uiState.update {
             it.copy(
                 mode = TableMode.HOST,
-                tableName = tableName.ifBlank { "家庭牌局" },
+                tableName = roomName.ifBlank { "家庭牌局" },
                 selfId = hostId,
                 selfName = hostPlayer.name,
                 players = listOf(hostPlayer),
@@ -89,17 +116,20 @@ class TableViewModel(
                 blindsEnabled = true,
                 blindContributions = emptyMap(),
                 lastSidePots = emptyList(),
-                info = "已开桌 | SB=${blindsConfig.smallBlind} BB=${blindsConfig.bigBlind} | 端口 45454"
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                info = "已创建房间「${roomName.ifBlank { "家庭牌局" }}」| 等待玩家加入"
             )
         }
 
+        // 启动 TCP 服务
         server.start(
             hostPlayersProvider = { _uiState.value.players },
             handCounterProvider = { _uiState.value.handCounter },
             txProvider = { _uiState.value.logs },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
-                    state.copy(players = state.players + player, info = "${player.name} 已加入")
+                    state.copy(players = state.players + player, info = "${player.name} 已加入房间")
                 }
                 syncToClients()
             },
@@ -113,22 +143,37 @@ class TableViewModel(
                 }
             }
         )
+
+        // 启动 UDP 广播让其他玩家发现
+        roomAdvertiser.startBroadcast(
+            roomName = _uiState.value.tableName,
+            tcpPort = 45454,
+            hostName = hostPlayer.name,
+            playerCountProvider = { _uiState.value.players.size }
+        )
     }
 
-    fun joinTable(hostIp: String, playerName: String, buyIn: Int) {
+    /**
+     * 通过选择已发现的房间加入
+     */
+    fun joinRoom(room: DiscoveredRoom, playerName: String, buyIn: Int) {
+        stopRoomScan()
         _uiState.update {
             it.copy(
                 mode = TableMode.CLIENT,
-                hostIp = hostIp,
+                tableName = room.roomName,
+                hostIp = room.hostIp,
                 selfName = playerName,
-                info = "正在连接 $hostIp ..."
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                info = "正在加入「${room.roomName}」..."
             )
         }
 
-        client.connect(hostIp, playerName.ifBlank { "玩家" }, buyIn) { event ->
+        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn) { event ->
             when (event) {
                 is LanTableClient.Event.JoinAccepted ->
-                    _uiState.update { it.copy(selfId = event.playerId, info = "已加入牌桌") }
+                    _uiState.update { it.copy(selfId = event.playerId, info = "已加入「${room.roomName}」") }
                 is LanTableClient.Event.StateSync ->
                     _uiState.update {
                         it.copy(
@@ -171,15 +216,12 @@ class TableViewModel(
             return
         }
 
-        // 旋转庄位
         val newBlinds = blindsManager.rotate(state.blindsState, state.players.size)
 
         if (state.blindsEnabled) {
-            // 按座位排序扣盲注
             val sortedPlayers = state.players.sortedBy { it.seatOrder }
             val (updatedPlayers, blindContribs) = blindsManager.deductBlinds(sortedPlayers, newBlinds)
 
-            // 生成盲注交易记录
             val handId = "HAND-${state.handCounter.toString().padStart(4, '0')}"
             val now = System.currentTimeMillis()
             val updatedMap = updatedPlayers.associateBy { it.id }
@@ -200,7 +242,6 @@ class TableViewModel(
                 )
             }
 
-            // 将盲注金额预填到投入输入框
             val prefilled = blindContribs.mapValues { (_, v) -> v.toString() }
 
             _uiState.update {
@@ -330,6 +371,8 @@ class TableViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        roomAdvertiser.close()
+        roomScanner.close()
         server.close()
         client.close()
     }
