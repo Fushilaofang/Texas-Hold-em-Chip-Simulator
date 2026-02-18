@@ -1,6 +1,10 @@
 [
     {
-        "merged": "com.fushilaofang.texasholdemchipsim.app-debug-47:/drawable_bilibili_default_avatar.jpg.flat",
-        "source": "com.fushilaofang.texasholdemchipsim.app-main-49:/drawable/bilibili_default_avatar.jpg"
+        "merged": "com.fushilaofang.texasholdemchipsim.app-debug-47:/drawable_bilibili_default_avatar.png.flat",
+        "source": "com.fushilaofang.texasholdemchipsim.app-main-49:/drawable/bilibili_default_avatar.png"
+    },
+    {
+        "merged": "/home/codespace/.gradle/daemon/8.9/com.fushilaofang.texasholdemchipsim.app-debug-47:/drawable_bilibili_default_avatar.jpg.flat",
+        "source": "/home/codespace/.gradle/daemon/8.9/com.fushilaofang.texasholdemchipsim.app-main-49:/drawable/bilibili_default_avatar.jpg"
     }
 ]

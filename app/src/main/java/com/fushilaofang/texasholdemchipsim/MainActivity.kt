@@ -1491,6 +1491,12 @@ private fun GameScreen(
                             )
                         } else {
                             // 第二页：Win + 结算本手（摊牌阶段可用）
+                            Text(
+                                "〉",
+                                fontSize = 18.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
                             val isWinner = state.selectedWinnerIds.contains(state.selfId)
                             Button(
                                 onClick = { if (canWin) onToggleMyWinner() },
