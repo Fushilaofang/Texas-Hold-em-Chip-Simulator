@@ -222,7 +222,6 @@ class MainActivity : ComponentActivity() {
                         onSetDealer = vm::setDealerInGame,
                         onUpdateMyProfile = vm::updateMyProfile,
                         onPickAvatar = launchAvatarPickerInDialog,
-                        getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
                 }
@@ -850,7 +849,6 @@ private fun GameScreen(
     onUpdateBlindsConfig: (Int, Int) -> Unit,
     onMovePlayer: (String, Int) -> Unit,
     onSetDealer: (Int) -> Unit,
-    getMinContribution: (String) -> Int,
     onLeave: () -> Unit,
     onUpdateMyProfile: (String, String) -> Unit = { _, _ -> },
     onPickAvatar: () -> Unit = {},
@@ -1331,7 +1329,6 @@ private fun GameScreen(
                     player = player,
                     state = state,
                     sortedPlayers = sortedPlayers,
-                    getMinContribution = getMinContribution,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -1673,7 +1670,6 @@ private fun CompactPlayerCard(
     player: PlayerState,
     state: TableUiState,
     sortedPlayers: List<PlayerState>,
-    getMinContribution: (String) -> Int,
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
@@ -1766,12 +1762,7 @@ private fun CompactPlayerCard(
                             Text("[掉线]", fontSize = 10.sp, color = Color.Red)
                         }
                     }
-                    if (state.blindsEnabled && state.players.size >= 2) {
-                        val minContrib = getMinContribution(player.id)
-                        if (minContrib > 0) {
-                            Text("最低投入: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
-                        }
-                    }
+
 
                 }
 
