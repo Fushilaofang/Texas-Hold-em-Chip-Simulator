@@ -227,29 +227,6 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // 局域网断线弹窗（本机断网，非房主掉线）
-                if (state.waitingForLanReconnect) {
-                    androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { /* 不允许点击外部关闭 */ },
-                        title = { Text("局域网已断开", fontWeight = FontWeight.Bold) },
-                        text = {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("您已断开局域网连接", fontSize = 16.sp)
-                                Spacer(Modifier.height(8.dp))
-                                Text("请重新连接 Wi-Fi，恢复后将自动重连房间", fontSize = 13.sp, color = Color.Gray)
-                            }
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = { vm.goHome() },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
-                            ) {
-                                Text("退出房间")
-                            }
-                        }
-                    )
-                }
-
                 // 等待房主重连弹窗
                 if (state.waitingForHostReconnect) {
                     androidx.compose.material3.AlertDialog(
@@ -257,7 +234,7 @@ class MainActivity : ComponentActivity() {
                         title = { Text("连接中断", fontWeight = FontWeight.Bold) },
                         text = {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("正在等待房主重连……", fontSize = 16.sp)
+                                Text("请等待房主重连或检查局域网连接", fontSize = 16.sp)
                                 Spacer(Modifier.height(8.dp))
                                 Text("系统会自动重新连接，请耐心等待", fontSize = 13.sp, color = Color.Gray)
                             }

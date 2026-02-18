@@ -79,9 +79,8 @@ data class TableUiState(
     val lastSidePots: List<SidePot> = emptyList(),
     // --- 掉线玩家 ---
     val disconnectedPlayerIds: Set<String> = emptySet(),
-    // --- 局域网断线等待重连 ---
+    // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
-    val waitingForLanReconnect: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -101,7 +100,6 @@ data class TableUiState(
 class TableViewModel(
     context: Context
 ) : ViewModel() {
-    private val appContext: Context = context.applicationContext
     private val settlementEngine = SettlementEngine()
     private val blindsManager = BlindsManager()
     private val repository = TransactionRepository(context.applicationContext)
@@ -355,7 +353,6 @@ class TableViewModel(
         }
 
         client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, ::handleClientEvent)
-        client.startNetworkMonitor(appContext, ::handleClientEvent)
         acquireWakeLock()
     }
 
@@ -1143,8 +1140,7 @@ class TableViewModel(
                     currentTurnPlayerId = state.currentTurnPlayerId,
                     roundContributions = state.roundContributions,
                     actedPlayerIds = state.actedPlayerIds,
-                    initialDealerIndex = state.initialDealerIndex,
-                    disconnectedPlayerIds = state.disconnectedPlayerIds
+                    initialDealerIndex = state.initialDealerIndex
                 )
             }
         }
@@ -1206,7 +1202,6 @@ class TableViewModel(
                         info = "$pName 掉线，等待重连..."
                     )
                 }
-                syncToClients() // 广播掉线状态给其他客户端
             }
             is LanTableServer.Event.PlayerReconnected -> {
                 val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
@@ -1296,9 +1291,8 @@ class TableViewModel(
                         currentRound = round,
                         currentTurnPlayerId = event.currentTurnPlayerId,
                         roundContributions = event.roundContributions,
-                    actedPlayerIds = event.actedPlayerIds,
+                        actedPlayerIds = event.actedPlayerIds,
                         initialDealerIndex = event.initialDealerIndex,
-                        disconnectedPlayerIds = event.disconnectedPlayerIds,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
                 }
@@ -1308,23 +1302,16 @@ class TableViewModel(
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Disconnected -> {
                 if (event.willReconnect) {
-                    // TCP 断连，判断是否局域网可用
-                    _uiState.update { it.copy(waitingForHostReconnect = true, waitingForLanReconnect = false, info = "连接断开，正在尝试重连...") }
+                    _uiState.update { it.copy(waitingForHostReconnect = true, info = "连接断开，正在尝试重连...") }
                 } else {
                     _uiState.update { it.copy(info = "连接断开") }
                 }
             }
             is LanTableClient.Event.Reconnected -> {
-                _uiState.update { it.copy(waitingForHostReconnect = false, waitingForLanReconnect = false, info = "重连成功") }
+                _uiState.update { it.copy(waitingForHostReconnect = false, info = "重连成功") }
             }
             is LanTableClient.Event.ReconnectFailed -> {
-                _uiState.update { it.copy(waitingForHostReconnect = false, waitingForLanReconnect = false, info = event.reason) }
-            }
-            is LanTableClient.Event.LanDisconnected -> {
-                _uiState.update { it.copy(waitingForLanReconnect = true, waitingForHostReconnect = false, info = "局域网已断开，请重新连接 Wi-Fi") }
-            }
-            is LanTableClient.Event.LanReconnecting -> {
-                _uiState.update { it.copy(waitingForLanReconnect = false, waitingForHostReconnect = true, info = "局域网已恢复，正在重连...") }
+                _uiState.update { it.copy(waitingForHostReconnect = false, info = event.reason) }
             }
         }
     }
@@ -1469,7 +1456,6 @@ class TableViewModel(
             }
 
             client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, ::handleClientEvent)
-            client.startNetworkMonitor(appContext, ::handleClientEvent)
             acquireWakeLock()
         }
     }
