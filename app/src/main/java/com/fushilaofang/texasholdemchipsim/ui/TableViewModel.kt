@@ -69,6 +69,8 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
+    // --- 被房主踢出 ---
+    val kickedFromGame: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -175,6 +177,37 @@ class TableViewModel(
                 info = "准备开始"
             )
         }
+    }
+
+    /** 被房主踢出：清除 session、禁止重连、跳回主页并标记 kickedFromGame */
+    fun beKickedGoHome() {
+        clearSession()
+        releaseWakeLock()
+        roomAdvertiser.stopBroadcast()
+        roomScanner.stopScan()
+        server.stop()
+        client.disconnect()
+        _uiState.update {
+            it.copy(
+                mode = TableMode.IDLE,
+                screen = ScreenState.HOME,
+                players = emptyList(),
+                gameStarted = false,
+                selfId = "",
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                disconnectedPlayerIds = emptySet(),
+                waitingForHostReconnect = false,
+                canRejoin = false,
+                kickedFromGame = true,
+                info = "准备开始"
+            )
+        }
+    }
+
+    /** 用户已阅读被踢提示，清除标记 */
+    fun acknowledgeKick() {
+        _uiState.update { it.copy(kickedFromGame = false) }
     }
 
     fun saveBuyIn(value: Int) {
@@ -742,6 +775,9 @@ class TableViewModel(
             }
             is LanTableClient.Event.ReconnectFailed -> {
                 _uiState.update { it.copy(waitingForHostReconnect = false, info = event.reason) }
+            }
+            is LanTableClient.Event.Kicked -> {
+                beKickedGoHome()
             }
         }
     }

@@ -185,11 +185,18 @@ class LanTableServer(
         }
     }
 
-    /** 房主主动踢出某个玩家，关闭其连接并从掉线列表清除 */
+    /** 房主主动踢出某个玩家，先发送踢出消息再关闭连接 */
     fun kickPlayer(playerId: String) {
         synchronized(clientsLock) {
             val conn = clients.remove(playerId)
             conn?.let {
+                // 先告知客户端被踢，再关闭连接
+                try {
+                    val kickedText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Kicked)
+                    it.writer.write(kickedText)
+                    it.writer.newLine()
+                    it.writer.flush()
+                } catch (_: Exception) {}
                 it.readerJob.cancel()
                 runCatching { it.socket.close() }
             }
@@ -429,6 +436,8 @@ class LanTableClient(
         data class Reconnected(val playerId: String) : Event()
         data class ReconnectFailed(val reason: String) : Event()
         data class Error(val message: String) : Event()
+        /** 被房主踢出，不应重连 */
+        data object Kicked : Event()
     }
 
     @Volatile
@@ -456,6 +465,7 @@ class LanTableClient(
         listenJob?.cancel()
         heartbeatJob?.cancel()
 
+        var wasKicked = false
         listenJob = scope.launch {
             try {
                 val newSocket = Socket(hostIp, DEFAULT_PORT)
@@ -544,6 +554,13 @@ class LanTableClient(
                         is NetworkMessage.Pong -> { /* 忽略，保活即可 */ }
 
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
+                        is NetworkMessage.Kicked -> {
+                            // 被房主踢出：禁止重连，通知上层
+                            shouldReconnect = false
+                            wasKicked = true
+                            onEvent(Event.Kicked)
+                            break
+                        }
                         else -> Unit
                     }
                 }
@@ -557,12 +574,12 @@ class LanTableClient(
                 socket = null
             }
 
-            // 断线后尝试重连
-            if (shouldReconnect && assignedPlayerId != null && !reconnecting) {
+            // 断线后尝试重连（被踢时不重连）
+            if (!wasKicked && shouldReconnect && assignedPlayerId != null && !reconnecting) {
                 reconnecting = true
                 onEvent(Event.Disconnected(willReconnect = true))
                 attemptReconnect(onEvent)
-            } else if (shouldReconnect && assignedPlayerId == null) {
+            } else if (!wasKicked && shouldReconnect && assignedPlayerId == null) {
                 onEvent(Event.Disconnected(willReconnect = false))
             }
         }

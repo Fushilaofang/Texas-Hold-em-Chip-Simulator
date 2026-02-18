@@ -117,6 +117,20 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                // 被房主踢出弹窗
+                if (state.kickedFromGame) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { /* 不允许点击外部关闭 */ },
+                        title = { Text("已被移出游戏", fontWeight = FontWeight.Bold) },
+                        text = { Text("您已被房主移出本局游戏。") },
+                        confirmButton = {
+                            Button(onClick = { vm.acknowledgeKick() }) {
+                                Text("确定")
+                            }
+                        }
+                    )
+                }
+
                 // 等待房主重连弹窗
                 if (state.waitingForHostReconnect) {
                     androidx.compose.material3.AlertDialog(
