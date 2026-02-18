@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -68,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
@@ -78,9 +81,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -388,107 +393,6 @@ private fun AvatarPicker(
                 modifier = Modifier.fillMaxSize()
             )
         }
-    }
-}
-
-// ==================== 角色矢量徽章图标 ====================
-
-/** 庄家徽章：深蓝圆底 + 白色 "D" */
-@Composable
-private fun DealerBadge(size: Int = 18) {
-    Canvas(modifier = Modifier.size(size.dp)) {
-        val r = this.size.minDimension / 2f
-        drawCircle(color = Color(0xFF1565C0), radius = r, center = center)
-        drawContext.canvas.nativeCanvas.apply {
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.WHITE
-                textSize = r * 1.2f
-                textAlign = android.graphics.Paint.Align.CENTER
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                isAntiAlias = true
-            }
-            val textY = center.y - (paint.descent() + paint.ascent()) / 2f
-            drawText("D", center.x, textY, paint)
-        }
-    }
-}
-
-/** 小盲徽章：橙色圆底 + 白色 "SB" */
-@Composable
-private fun SmallBlindBadge(size: Int = 18) {
-    Canvas(modifier = Modifier.size(size.dp)) {
-        val r = this.size.minDimension / 2f
-        drawCircle(color = Color(0xFFEF6C00), radius = r, center = center)
-        drawContext.canvas.nativeCanvas.apply {
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.WHITE
-                textSize = r * 1.0f
-                textAlign = android.graphics.Paint.Align.CENTER
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                isAntiAlias = true
-            }
-            val textY = center.y - (paint.descent() + paint.ascent()) / 2f
-            drawText("SB", center.x, textY, paint)
-        }
-    }
-}
-
-/** 大盲徽章：红色圆底 + 白色 "BB" */
-@Composable
-private fun BigBlindBadge(size: Int = 18) {
-    Canvas(modifier = Modifier.size(size.dp)) {
-        val r = this.size.minDimension / 2f
-        drawCircle(color = Color(0xFFC62828), radius = r, center = center)
-        drawContext.canvas.nativeCanvas.apply {
-            val paint = android.graphics.Paint().apply {
-                color = android.graphics.Color.WHITE
-                textSize = r * 1.0f
-                textAlign = android.graphics.Paint.Align.CENTER
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
-                isAntiAlias = true
-            }
-            val textY = center.y - (paint.descent() + paint.ascent()) / 2f
-            drawText("BB", center.x, textY, paint)
-        }
-    }
-}
-
-/** Win 徽标：金色圆角胶囊 + 白色星 */
-@Composable
-private fun WinBadge() {
-    Box(
-        modifier = Modifier
-            .background(Color(0xFFFFA000), RoundedCornerShape(4.dp))
-            .padding(horizontal = 4.dp, vertical = 1.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("★Win", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
-    }
-}
-
-/** 弃牌徽标 */
-@Composable
-private fun FoldBadge() {
-    Box(
-        modifier = Modifier
-            .background(Color(0xFF9E9E9E), RoundedCornerShape(4.dp))
-            .padding(horizontal = 4.dp, vertical = 1.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("弃牌", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
-    }
-}
-
-/** 掉线徽标 */
-@Composable
-private fun OfflineBadge() {
-    Box(
-        modifier = Modifier
-            .background(Color(0xFFE53935), RoundedCornerShape(4.dp))
-            .padding(horizontal = 4.dp, vertical = 1.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("掉线", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -853,7 +757,7 @@ private fun LobbyScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (isDealer) {
-                                    DealerBadge(size = 16)
+                                    Text("[庄]", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
                                 }
                                 Text(
                                     "${player.name}",
@@ -1069,7 +973,13 @@ private fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             if (isDealer) {
-                                DealerBadge(size = 18)
+                                Text(
+                                    "[庄]",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFE65100),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
                             } else {
                                 Text(
                                     "${seatIdx + 1}.",
@@ -1131,7 +1041,13 @@ private fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             if (isDealer) {
-                                DealerBadge(size = 18)
+                                Text(
+                                    "[庄]",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFE65100),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
                             } else {
                                 Text(
                                     "${seatIdx + 1}.",
@@ -1227,13 +1143,38 @@ private fun GameScreen(
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        // ========== 顶部栏：房间名 + 记录 + 菜单 ==========
+        // ========== 顶部信息栏 + 记录按钮 ==========
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
+                    Text(
+                        roundLabel,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
+                    )
+                }
+                if (state.blindsEnabled && sortedPlayers.size >= 2) {
+                    Text(
+                        "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
+                        fontSize = 11.sp, color = Color.Gray, maxLines = 1
+                    )
+                }
+                if (!isShowdown && turnPlayerName.isNotEmpty()) {
+                    Text(
+                        if (isMyTurn) "轮到你行动" else "等待 $turnPlayerName 行动",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isMyTurn) Color(0xFFE65100) else Color.Gray
+                    )
+                }
+            }
             OutlinedButton(
                 onClick = { showLogs = true },
                 modifier = Modifier.padding(start = 8.dp)
@@ -1352,116 +1293,284 @@ private fun GameScreen(
             }
         }
 
-        // ========== 中间区域（信息1/4 + 玩家3/4）==========
-        Column(
+        Spacer(Modifier.height(4.dp))
+
+        // ========== 牌桌区域（矢量绘制椭圆桌 + 玩家环绕） ==========
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
         ) {
-            // ---- 信息展示区（1/4）----
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                    )
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.Center
-            ) {
-                // 手数 + 轮次
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // 牌桌背景
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val cx = size.width / 2f
+                val cy = size.height / 2f
+                val tableW = size.width * 0.88f
+                val tableH = size.height * 0.72f
+
+                // 外圈阴影
+                drawOval(
+                    color = Color(0x22000000),
+                    topLeft = Offset(cx - tableW / 2f + 4f, cy - tableH / 2f + 6f),
+                    size = Size(tableW, tableH)
+                )
+                // 桌面主体
+                drawOval(
+                    color = Color(0xFFF5F0E8),
+                    topLeft = Offset(cx - tableW / 2f, cy - tableH / 2f),
+                    size = Size(tableW, tableH)
+                )
+                // 内圈线
+                val innerW = tableW * 0.88f
+                val innerH = tableH * 0.82f
+                drawOval(
+                    color = Color(0xFFE8E0D0),
+                    topLeft = Offset(cx - innerW / 2f, cy - innerH / 2f),
+                    size = Size(innerW, innerH),
+                    style = Stroke(width = 2f)
+                )
+            }
+
+            // 底池显示（桌中央）
+            val totalPot = state.roundContributions.values.sum() +
+                    state.contributionInputs.values.sumOf { it.toIntOrNull() ?: 0 }
+            if (totalPot > 0) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
-                    Text(
-                        roundLabel,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
-                    )
-                    if (!isShowdown && turnPlayerName.isNotEmpty()) {
+                    if (state.blindsEnabled) {
                         Text(
-                            if (isMyTurn) "⬤ 轮到你行动" else "等待 $turnPlayerName",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isMyTurn) Color(0xFFE65100) else Color.Gray,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-                // 盲注信息（图标 + 名字）
-                if (state.blindsEnabled && sortedPlayers.size >= 2) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        DealerBadge(size = 16)
-                        Text(dealerName, fontSize = 11.sp, color = Color.Gray)
-                        SmallBlindBadge(size = 16)
-                        Text(sbName, fontSize = 11.sp, color = Color.Gray)
-                        BigBlindBadge(size = 16)
-                        Text(bbName, fontSize = 11.sp, color = Color.Gray)
-                        Text(
-                            "(${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
+                            "${state.blindsState.config.smallBlind} / ${state.blindsState.config.bigBlind}",
                             fontSize = 11.sp,
-                            color = Color(0xFF757575)
+                            color = Color(0xFF888070)
                         )
                     }
-                }
-                // 底池 + 边池信息
-                val totalPot = state.roundContributions.values.sum() +
-                        state.contributionInputs.values.sumOf { it.toIntOrNull() ?: 0 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
                     Text(
-                        "底池: $totalPot",
-                        fontSize = 13.sp,
+                        "$ $totalPot",
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1565C0)
+                        color = Color(0xFF5D4E37)
                     )
-                    if (state.lastSidePots.size > 1) {
-                        state.lastSidePots.forEach { pot ->
-                            Text(
-                                "${pot.label}:${pot.amount}",
-                                fontSize = 11.sp,
-                                color = Color(0xFFE65100),
-                                fontWeight = FontWeight.Medium
-                            )
+                }
+            }
+
+            // 玩家沿桌边排列
+            val playerCount = sortedPlayers.size
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val areaW = constraints.maxWidth.toFloat()
+                val areaH = constraints.maxHeight.toFloat()
+                val cx = areaW / 2f
+                val cy = areaH / 2f
+                val radiusX = areaW * 0.42f
+                val radiusY = areaH * 0.40f
+
+                // 计算每位玩家的角度位置（从底部正中开始，顺时针）
+                sortedPlayers.forEachIndexed { index, player ->
+                    // 起始角度 π/2（底部），顺时针分布
+                    val angle = Math.PI / 2.0 + (2.0 * Math.PI * index / playerCount)
+                    val px = cx + radiusX * kotlin.math.cos(angle).toFloat()
+                    val py = cy + radiusY * kotlin.math.sin(angle).toFloat()
+
+                    // 密度转换
+                    val density = LocalDensity.current
+                    val cardWidthDp = 110.dp
+                    val cardTotalHeightDp = 100.dp // 卡片+标签总高度预估
+                    val cardWidthPx = with(density) { cardWidthDp.toPx() }
+                    val cardTotalHeightPx = with(density) { cardTotalHeightDp.toPx() }
+
+                    val offsetX = with(density) { (px - cardWidthPx / 2f).toDp() }
+                    val offsetY = with(density) { (py - cardTotalHeightPx / 2f).toDp() }
+
+                    val seatIdx = index
+                    val isCurrentTurn = player.id == state.currentTurnPlayerId && state.currentRound != BettingRound.SHOWDOWN
+                    val isFolded = state.foldedPlayerIds.contains(player.id)
+                    val isWinner = state.selectedWinnerIds.contains(player.id)
+                    val isOffline = state.disconnectedPlayerIds.contains(player.id)
+                    val roundContrib = state.roundContributions[player.id]
+                    val roleTag = buildString {
+                        if (state.blindsEnabled && state.players.size >= 2) {
+                            if (seatIdx == state.blindsState.dealerIndex) append("D ")
+                            if (seatIdx == state.blindsState.smallBlindIndex) append("SB ")
+                            if (seatIdx == state.blindsState.bigBlindIndex) append("BB ")
+                        }
+                    }.trim()
+
+                    Box(
+                        modifier = Modifier
+                            .offset(x = offsetX, y = offsetY)
+                            .width(cardWidthDp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // 上方：角色标签（庄/盲注/状态）
+                            if (roleTag.isNotEmpty() || isFolded || isWinner || isOffline) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                ) {
+                                    if (roleTag.isNotEmpty()) {
+                                        Text(
+                                            roleTag,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            modifier = Modifier
+                                                .background(
+                                                    color = Color(0xFF5C6BC0),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                    if (isWinner) {
+                                        Text(
+                                            "Win",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            modifier = Modifier
+                                                .background(
+                                                    color = Color(0xFF388E3C),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                    if (isFolded) {
+                                        Text(
+                                            "弃牌",
+                                            fontSize = 9.sp,
+                                            color = Color.White,
+                                            modifier = Modifier
+                                                .background(
+                                                    color = Color(0xFF9E9E9E),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                    if (isOffline) {
+                                        Text(
+                                            "掉线",
+                                            fontSize = 9.sp,
+                                            color = Color.White,
+                                            modifier = Modifier
+                                                .background(
+                                                    color = Color(0xFFE53935),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 胶囊卡片主体
+                            val capsuleColor = when {
+                                isFolded -> Color(0xFFBDBDBD)
+                                isCurrentTurn -> Color(0xFF7E57C2)
+                                player.id == state.selfId -> Color(0xFF5C6BC0)
+                                else -> Color(0xFF78909C)
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .background(
+                                        color = capsuleColor,
+                                        shape = RoundedCornerShape(50)
+                                    )
+                                    .padding(start = 3.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                // 头像
+                                Box {
+                                    AvatarImage(
+                                        avatarBase64 = player.avatarBase64,
+                                        name = player.name,
+                                        size = 32
+                                    )
+                                    if (player.id == state.selfId) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF43A047))
+                                                .align(Alignment.BottomEnd)
+                                                .border(1.dp, Color.White, CircleShape)
+                                        )
+                                    }
+                                }
+                                // 昵称 + 筹码上下排列
+                                Column {
+                                    Text(
+                                        player.name,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "${player.chips}",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFE0E0E0)
+                                    )
+                                }
+                            }
+
+                            // 下方：本手下注 + 行动状态
+                            if ((roundContrib != null && roundContrib > 0) || isCurrentTurn) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                ) {
+                                    if (roundContrib != null && roundContrib > 0) {
+                                        Text(
+                                            "$ $roundContrib",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF5D4E37)
+                                        )
+                                    }
+                                    if (isCurrentTurn) {
+                                        Text(
+                                            "⬤ 行动中",
+                                            fontSize = 9.sp,
+                                            color = Color(0xFFE65100),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
 
-            Spacer(Modifier.height(4.dp))
-
-            // ---- 玩家卡片区（3/4）----
-            Column(
+        // 边池信息
+        if (state.lastSidePots.size > 1) {
+            Card(
                 modifier = Modifier
-                    .weight(3f)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
             ) {
-                sortedPlayers.forEach { player ->
-                    CompactPlayerCard(
-                        player = player,
-                        state = state,
-                        sortedPlayers = sortedPlayers,
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxWidth()
-                    )
+                Column(modifier = Modifier.padding(6.dp)) {
+                    Text("边池详情", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    state.lastSidePots.forEach { pot ->
+                        val names = sortedPlayers
+                            .filter { pot.eligiblePlayerIds.contains(it.id) }
+                            .joinToString(", ") { it.name }
+                        Text("${pot.label}: ${pot.amount} | $names", fontSize = 11.sp)
+                    }
                 }
             }
         }
-
-        Spacer(Modifier.height(4.dp))
 
         // ========== 底部：双页水平滑动操作栏 ==========
         val isFolded = state.foldedPlayerIds.contains(state.selfId)
@@ -1828,16 +1937,19 @@ private fun CompactPlayerCard(
     val isFolded = state.foldedPlayerIds.contains(player.id)
     val isCurrentTurn = player.id == state.currentTurnPlayerId && state.currentRound != BettingRound.SHOWDOWN
 
-    val isDealer = state.blindsEnabled && state.players.size >= 2 && seatIdx == state.blindsState.dealerIndex
-    val isSB = state.blindsEnabled && state.players.size >= 2 && seatIdx == state.blindsState.smallBlindIndex
-    val isBB = state.blindsEnabled && state.players.size >= 2 && seatIdx == state.blindsState.bigBlindIndex
-
+    val roleTag = buildString {
+        if (state.blindsEnabled && state.players.size >= 2) {
+            if (seatIdx == state.blindsState.dealerIndex) append("[庄]")
+            if (seatIdx == state.blindsState.smallBlindIndex) append("[小盲]")
+            if (seatIdx == state.blindsState.bigBlindIndex) append("[大盲]")
+        }
+    }
     val cardColor = when {
         isFolded -> Color(0xFFE0E0E0)
         isOffline -> Color(0xFFEEEEEE)
-        isCurrentTurn -> Color(0xFFFFE0B2)
+        isCurrentTurn -> Color(0xFFFFE0B2) // 橙色高亮：当前行动者
         isMe -> Color(0xFFFFF8E1)
-        isDealer -> Color(0xFFE3F2FD)
+        state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
         else -> MaterialTheme.colorScheme.surface
     }
     val submittedAmount = state.contributionInputs[player.id]
@@ -1851,18 +1963,18 @@ private fun CompactPlayerCard(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 头像 + 角色徽章叠放
+                // 最左侧：头像
                 Box {
                     AvatarImage(
                         avatarBase64 = player.avatarBase64,
                         name = player.name,
                         size = 38
                     )
-                    // 本人绿色圆点
+                    // 本人标识小圆点
                     if (isMe) {
                         Box(
                             modifier = Modifier
@@ -1873,77 +1985,78 @@ private fun CompactPlayerCard(
                                 .border(1.dp, Color.White, CircleShape)
                         )
                     }
-                    // 角色徽章（头像右上角）
-                    if (isDealer || isSB || isBB) {
-                        Box(modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp)) {
-                            when {
-                                isDealer && isSB -> SmallBlindBadge(size = 14) // 单挑庄=SB
-                                isDealer -> DealerBadge(size = 14)
-                                isSB -> SmallBlindBadge(size = 14)
-                                isBB -> BigBlindBadge(size = 14)
-                            }
-                        }
-                    }
                 }
 
-                // 中间：名称 + 状态徽标
+                // 中间：身份信息
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        player.name,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                    // 状态徽标行
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (state.selectedWinnerIds.contains(player.id)) { WinBadge() }
-                        if (isFolded) { FoldBadge() }
-                        if (isOffline) { OfflineBadge() }
-                        if (isCurrentTurn) {
-                            Box(
-                                modifier = Modifier
-                                    .background(Color(0xFF43A047), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 4.dp, vertical = 1.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("行动中", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
-                            }
+                        if (roleTag.isNotEmpty()) {
+                            Text(
+                                roleTag,
+                                fontSize = 10.sp,
+                                color = Color(0xFF1565C0),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            player.name,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        if (state.selectedWinnerIds.contains(player.id)) {
+                            Text("[Win]", fontSize = 10.sp, color = Color(0xFF388E3C), fontWeight = FontWeight.Bold)
+                        }
+                        if (isFolded) {
+                            Text("[弃牌]", fontSize = 10.sp, color = Color(0xFF9E9E9E), fontWeight = FontWeight.Bold)
+                        }
+                        if (isOffline) {
+                            Text("[掉线]", fontSize = 10.sp, color = Color.Red)
                         }
                     }
+
+
                 }
 
-                // 右侧：筹码 + 投注信息
+                // 右侧：筹码 + 投入 + 本轮投入
                 Column(
                     horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        "${player.chips}",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF212121)
+                        "筹码 ${player.chips}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
                     )
                     if (!submittedAmount.isNullOrBlank() && submittedAmount != "0") {
                         Text(
-                            "总 $submittedAmount",
-                            fontSize = 11.sp,
+                            "总投入 $submittedAmount",
+                            fontSize = 12.sp,
                             color = Color(0xFF388E3C),
                             fontWeight = FontWeight.Medium
                         )
                     }
                     if (roundContrib != null && roundContrib > 0) {
                         Text(
-                            "轮 $roundContrib",
+                            "本轮 $roundContrib",
                             fontSize = 11.sp,
                             color = Color(0xFF1976D2),
                             fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (isCurrentTurn) {
+                        Text(
+                            "⬤ 行动中",
+                            fontSize = 10.sp,
+                            color = Color(0xFFE65100),
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
