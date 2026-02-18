@@ -1486,18 +1486,68 @@ private fun GameScreen(
                 val areaH = constraints.maxHeight.toFloat()
                 val cx = areaW / 2f
                 val cy = areaH / 2f
-                // 玩家排列椭圆轨迹匹配竖向牌桌
+                // 与牌桌绘制保持相同的尺寸参数
                 val tableH = minOf(areaH * 0.60f, areaW * 1.2f)
                 val tableW = minOf(areaW * 0.52f, tableH * 0.52f)
-                val radiusX = tableW / 2f * 1.65f  // 横向半径：桌子较窄，向外扩展让卡片不重叠
-                val radiusY = tableH / 2f * 1.18f  // 纵向半径：沿桌边外侧
+                // 外扩间距：使玩家卡片沿牌桌外轮廓（圆槽形）分布
+                val outerPad = tableW * 0.60f
 
-                // 计算每位玩家的角度位置（从底部正中开始，顺时针）
+                // 在圆槽形（Stadium）外轮廓上按弧长均匀分布的位置计算函数
+                // t ∈ [0,1)，从底部正中开始，顺时针方向
+                fun posOnStadium(t: Float): Pair<Float, Float> {
+                    val r = tableW / 2f
+                    val R = r + outerPad          // 外轨道圆端半径
+                    val straight = (tableH - tableW).coerceAtLeast(0f)  // 直边长度
+                    val semiArc = Math.PI.toFloat() * R                  // 半圆弧长
+                    val totalPerim = 2f * semiArc + 2f * straight
+
+                    val dist = ((t % 1f + 1f) % 1f) * totalPerim        // 从底部中心的弧长距离
+
+                    val bcy = cy + tableH / 2f - r   // 底部半圆圆心 Y
+                    val tcy = cy - tableH / 2f + r   // 顶部半圆圆心 Y
+
+                    // 各段累计弧长边界
+                    val d1 = semiArc / 2f            // 底部右半圆 (90°→0°)
+                    val d2 = d1 + straight            // 右侧直边 (上行)
+                    val d3 = d2 + semiArc             // 顶部半圆 (0°→-180°，经过顶端)
+                    val d4 = d3 + straight            // 左侧直边 (下行)
+                    // d4 + semiArc/2 = totalPerim   底部左半圆 (180°→90°)
+
+                    return when {
+                        dist <= d1 -> {
+                            // 底部右半圆：角度从 90° 降至 0°
+                            val a = (Math.PI / 2.0 * (1.0 - dist / d1)).toFloat()
+                            Pair(cx + R * kotlin.math.cos(a), bcy + R * kotlin.math.sin(a))
+                        }
+                        dist <= d2 -> {
+                            // 右侧直边：从 (cx+R, bcy) 向上到 (cx+R, tcy)
+                            val frac = (dist - d1) / straight
+                            Pair(cx + R, bcy - frac * straight)
+                        }
+                        dist <= d3 -> {
+                            // 顶部半圆：角度从 0° 降至 -180°（经过顶端）
+                            val frac = (dist - d2) / semiArc
+                            val a = -(Math.PI.toFloat() * frac)
+                            Pair(cx + R * kotlin.math.cos(a), tcy + R * kotlin.math.sin(a))
+                        }
+                        dist <= d4 -> {
+                            // 左侧直边：从 (cx-R, tcy) 向下到 (cx-R, bcy)
+                            val frac = (dist - d3) / straight
+                            Pair(cx - R, tcy + frac * straight)
+                        }
+                        else -> {
+                            // 底部左半圆：角度从 180° 降至 90°
+                            val frac = (dist - d4) / (semiArc / 2f)
+                            val a = (Math.PI * (1.0 - frac * 0.5)).toFloat()
+                            Pair(cx + R * kotlin.math.cos(a), bcy + R * kotlin.math.sin(a))
+                        }
+                    }
+                }
+
+                // 计算每位玩家的位置（从底部正中开始，顺时针均匀分布）
                 sortedPlayers.forEachIndexed { index, player ->
-                    // 起始角度 π/2（底部），顺时针分布
-                    val angle = Math.PI / 2.0 + (2.0 * Math.PI * index / playerCount)
-                    val px = cx + radiusX * kotlin.math.cos(angle).toFloat()
-                    val py = cy + radiusY * kotlin.math.sin(angle).toFloat()
+                    val t = index.toFloat() / playerCount
+                    val (px, py) = posOnStadium(t)
 
                     // 密度转换
                     val density = LocalDensity.current
