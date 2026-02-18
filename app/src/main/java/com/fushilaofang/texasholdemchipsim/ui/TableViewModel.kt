@@ -54,6 +54,7 @@ data class TableUiState(
     val hostIp: String = "",
     val players: List<PlayerState> = emptyList(),
     val selectedWinnerIds: Set<String> = emptySet(),
+    val foldedPlayerIds: Set<String> = emptySet(),
     val contributionInputs: Map<String, String> = emptyMap(),
     val handCounter: Int = 1,
     val logs: List<ChipTransaction> = emptyList(),
@@ -460,6 +461,7 @@ class TableViewModel(
                     blindContributions = blindPrefills,
                     contributionInputs = prefilled,
                     selectedWinnerIds = emptySet(),
+                    foldedPlayerIds = emptySet(),
                     lastSidePots = sidePots,
                     logs = logsAfterSettle,
                     info = infoText
@@ -479,6 +481,7 @@ class TableViewModel(
                     blindContributions = emptyMap(),
                     contributionInputs = emptyMap(),
                     selectedWinnerIds = emptySet(),
+                    foldedPlayerIds = emptySet(),
                     lastSidePots = sidePots,
                     logs = logsAfterSettle,
                     info = infoText
@@ -607,6 +610,35 @@ class TableViewModel(
         }
     }
 
+    /** 弃牌（不可撤销，本手内持续生效） */
+    fun foldMyself() {
+        val state = _uiState.value
+        val selfId = state.selfId
+        if (selfId.isBlank()) return
+        if (state.foldedPlayerIds.contains(selfId)) return // 已弃牌
+
+        if (state.mode == TableMode.HOST) {
+            _uiState.update { s ->
+                s.copy(
+                    foldedPlayerIds = s.foldedPlayerIds + selfId,
+                    // 弃牌时将投入清零
+                    contributionInputs = s.contributionInputs + (selfId to "0"),
+                    info = "你已弃牌"
+                )
+            }
+            syncToClients()
+        } else {
+            client.sendFold(selfId)
+            _uiState.update { s ->
+                s.copy(
+                    foldedPlayerIds = s.foldedPlayerIds + selfId,
+                    contributionInputs = s.contributionInputs + (selfId to "0"),
+                    info = "你已弃牌"
+                )
+            }
+        }
+    }
+
     // ==================== 结算已整合到 settleAndAdvance ====================
 
 
@@ -638,6 +670,7 @@ class TableViewModel(
                     blindsEnabled = state.blindsEnabled,
                     sidePotEnabled = state.sidePotEnabled,
                     selectedWinnerIds = state.selectedWinnerIds,
+                    foldedPlayerIds = state.foldedPlayerIds,
                     gameStarted = state.gameStarted
                 )
             }
@@ -660,6 +693,7 @@ class TableViewModel(
             blindsEnabledProvider = { _uiState.value.blindsEnabled },
             sidePotEnabledProvider = { _uiState.value.sidePotEnabled },
             selectedWinnerIdsProvider = { _uiState.value.selectedWinnerIds },
+            foldedPlayerIdsProvider = { _uiState.value.foldedPlayerIds },
             gameStartedProvider = { _uiState.value.gameStarted },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
@@ -742,6 +776,17 @@ class TableViewModel(
                 }
                 syncToClients()
             }
+            is LanTableServer.Event.FoldReceived -> {
+                _uiState.update { state ->
+                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                    state.copy(
+                        foldedPlayerIds = state.foldedPlayerIds + event.playerId,
+                        contributionInputs = state.contributionInputs + (event.playerId to "0"),
+                        info = "$playerName 已弃牌"
+                    )
+                }
+                syncToClients()
+            }
             else -> Unit
         }
     }
@@ -765,6 +810,7 @@ class TableViewModel(
                         blindsEnabled = event.blindsEnabled,
                         sidePotEnabled = event.sidePotEnabled,
                         selectedWinnerIds = event.selectedWinnerIds,
+                        foldedPlayerIds = event.foldedPlayerIds,
                         gameStarted = event.gameStarted,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )

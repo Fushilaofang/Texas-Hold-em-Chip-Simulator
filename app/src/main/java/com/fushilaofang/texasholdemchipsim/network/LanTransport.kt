@@ -46,6 +46,7 @@ class LanTableServer(
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class WinToggleReceived(val playerId: String, val isWinner: Boolean) : Event()
+        data class FoldReceived(val playerId: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -68,6 +69,7 @@ class LanTableServer(
         blindsEnabledProvider: () -> Boolean = { true },
         sidePotEnabledProvider: () -> Boolean = { true },
         selectedWinnerIdsProvider: () -> Set<String> = { emptySet() },
+        foldedPlayerIdsProvider: () -> Set<String> = { emptySet() },
         gameStartedProvider: () -> Boolean = { false },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
@@ -94,6 +96,7 @@ class LanTableServer(
                             blindsEnabledProvider = blindsEnabledProvider,
                             sidePotEnabledProvider = sidePotEnabledProvider,
                             selectedWinnerIdsProvider = selectedWinnerIdsProvider,
+                            foldedPlayerIdsProvider = foldedPlayerIdsProvider,
                             gameStartedProvider = gameStartedProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
@@ -158,6 +161,7 @@ class LanTableServer(
         blindsEnabled: Boolean = true,
         sidePotEnabled: Boolean = true,
         selectedWinnerIds: Set<String> = emptySet(),
+        foldedPlayerIds: Set<String> = emptySet(),
         gameStarted: Boolean = false
     ) {
         val message = NetworkMessage.StateSync(
@@ -169,6 +173,7 @@ class LanTableServer(
             blindsEnabled = blindsEnabled,
             sidePotEnabled = sidePotEnabled,
             selectedWinnerIds = selectedWinnerIds,
+            foldedPlayerIds = foldedPlayerIds,
             gameStarted = gameStarted
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
@@ -224,6 +229,7 @@ class LanTableServer(
         blindsEnabledProvider: () -> Boolean,
         sidePotEnabledProvider: () -> Boolean,
         selectedWinnerIdsProvider: () -> Set<String>,
+        foldedPlayerIdsProvider: () -> Set<String>,
         gameStartedProvider: () -> Boolean,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
@@ -260,6 +266,10 @@ class LanTableServer(
                             onEvent(Event.WinToggleReceived(msg.playerId, msg.isWinner))
                         }
 
+                        is NetworkMessage.Fold -> {
+                            onEvent(Event.FoldReceived(msg.playerId))
+                        }
+
                         is NetworkMessage.Reconnect -> {
                             val oldId = msg.playerId
                             // 检查是否在掉线等待列表中
@@ -289,6 +299,7 @@ class LanTableServer(
                                     blindsEnabled = blindsEnabledProvider(),
                                     sidePotEnabled = sidePotEnabledProvider(),
                                     selectedWinnerIds = selectedWinnerIdsProvider(),
+                                    foldedPlayerIds = foldedPlayerIdsProvider(),
                                     gameStarted = gameStartedProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
@@ -357,6 +368,7 @@ class LanTableServer(
                                 blindsEnabled = blindsEnabledProvider(),
                                 sidePotEnabled = sidePotEnabledProvider(),
                                 selectedWinnerIds = selectedWinnerIdsProvider(),
+                                foldedPlayerIds = foldedPlayerIdsProvider(),
                                 gameStarted = gameStartedProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
@@ -429,6 +441,7 @@ class LanTableClient(
             val blindsEnabled: Boolean = true,
             val sidePotEnabled: Boolean = true,
             val selectedWinnerIds: Set<String> = emptySet(),
+            val foldedPlayerIds: Set<String> = emptySet(),
             val gameStarted: Boolean = false
         ) : Event()
 
@@ -532,6 +545,7 @@ class LanTableClient(
                                     blindsEnabled = msg.blindsEnabled,
                                     sidePotEnabled = msg.sidePotEnabled,
                                     selectedWinnerIds = msg.selectedWinnerIds,
+                                    foldedPlayerIds = msg.foldedPlayerIds,
                                     gameStarted = msg.gameStarted
                                 )
                             )
@@ -656,6 +670,18 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.WinToggle(playerId = playerId, isWinner = isWinner)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun sendFold(playerId: String) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.Fold(playerId = playerId)
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()

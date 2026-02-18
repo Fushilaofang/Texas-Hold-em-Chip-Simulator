@@ -32,6 +32,7 @@ sealed class NetworkMessage {
         val blindsEnabled: Boolean = true,
         val sidePotEnabled: Boolean = true,
         val selectedWinnerIds: Set<String> = emptySet(),
+        val foldedPlayerIds: Set<String> = emptySet(),
         val gameStarted: Boolean = false
     ) : NetworkMessage()
 
@@ -63,6 +64,15 @@ sealed class NetworkMessage {
     data class WinToggle(
         val playerId: String,
         val isWinner: Boolean
+    ) : NetworkMessage()
+
+    /**
+     * 玩家弃牌（客户端 → 服务端）
+     */
+    @Serializable
+    @SerialName("fold")
+    data class Fold(
+        val playerId: String
     ) : NetworkMessage()
 
     @Serializable

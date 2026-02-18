@@ -111,6 +111,7 @@ class MainActivity : ComponentActivity() {
                         state = state,
                         onSubmitContribution = vm::submitMyContribution,
                         onToggleMyWinner = vm::toggleMyWinner,
+                        onFold = vm::foldMyself,
                         onSettleAndAdvance = vm::settleAndAdvance,
                         onToggleBlinds = vm::toggleBlinds,
                         onToggleSidePot = vm::toggleSidePot,
@@ -549,6 +550,7 @@ private fun GameScreen(
     state: TableUiState,
     onSubmitContribution: (Int) -> Unit,
     onToggleMyWinner: () -> Unit,
+    onFold: () -> Unit,
     onSettleAndAdvance: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     onToggleSidePot: (Boolean) -> Unit,
@@ -581,7 +583,6 @@ private fun GameScreen(
         )
     }
 
-    var myContribInput by remember { mutableStateOf("") }
     val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
     val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
     val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
@@ -711,7 +712,6 @@ private fun GameScreen(
                     player = player,
                     state = state,
                     sortedPlayers = sortedPlayers,
-                    onToggleMyWinner = onToggleMyWinner,
                     getMinContribution = getMinContribution,
                     modifier = Modifier
                         .weight(1f)
@@ -722,53 +722,146 @@ private fun GameScreen(
 
         Spacer(Modifier.height(4.dp))
 
-        // ========== 底部：我的投入操作 ==========
-        val myPlayer = sortedPlayers.firstOrNull { it.id == state.selfId }
-        if (myPlayer != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1))
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    if (state.blindsEnabled && sortedPlayers.size >= 2) {
-                        val minC = getMinContribution(myPlayer.id)
-                        if (minC > 0) {
+        // ========== 底部：双页水平滑动操作栏 ==========
+        val isFolded = state.foldedPlayerIds.contains(state.selfId)
+        var showFoldConfirm by remember { mutableStateOf(false) }
+        var showSettleConfirm by remember { mutableStateOf(false) }
+        var showChipDialog by remember { mutableStateOf(false) }
+
+        // 弃牌确认弹窗
+        if (showFoldConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showFoldConfirm = false },
+                title = { Text("确认弃牌", fontWeight = FontWeight.Bold) },
+                text = { Text("弃牌后本手无法再操作，确定弃牌吗？") },
+                confirmButton = {
+                    Button(
+                        onClick = { showFoldConfirm = false; onFold() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                    ) { Text("确定弃牌") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showFoldConfirm = false }) { Text("取消") }
+                }
+            )
+        }
+        // 结算确认弹窗
+        if (showSettleConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showSettleConfirm = false },
+                title = { Text("确认结算本手", fontWeight = FontWeight.Bold) },
+                text = { Text("确认结束并结算本手吗？结算后将自动进入下一手。") },
+                confirmButton = {
+                    Button(
+                        onClick = { showSettleConfirm = false; onSettleAndAdvance() },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                    ) { Text("确定结算") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showSettleConfirm = false }) { Text("取消") }
+                }
+            )
+        }
+        // 筹码投入弹窗
+        if (showChipDialog) {
+            val myPlayer = sortedPlayers.firstOrNull { it.id == state.selfId }
+            ChipInputDialog(
+                maxChips = myPlayer?.chips ?: 0,
+                onDismiss = { showChipDialog = false },
+                onConfirm = { amount ->
+                    showChipDialog = false
+                    onSubmitContribution(amount)
+                }
+            )
+        }
+
+        val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5))
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                androidx.compose.foundation.pager.HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth()
+                ) { page ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (page == 0) {
+                            // 第一页：弃牌 + 投入
+                            Button(
+                                onClick = { if (!isFolded) showFoldConfirm = true },
+                                enabled = !isFolded,
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFE53935),
+                                    disabledContainerColor = Color(0xFFBDBDBD)
+                                )
+                            ) { Text("弃牌", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+
+                            Button(
+                                onClick = { if (!isFolded) showChipDialog = true },
+                                enabled = !isFolded,
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF1976D2),
+                                    disabledContainerColor = Color(0xFFBDBDBD)
+                                )
+                            ) { Text("投入", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+
                             Text(
-                                "最低投入: $minC | 最大: ${myPlayer.chips}",
-                                fontSize = 11.sp, color = Color(0xFFE65100)
+                                "〈",
+                                fontSize = 18.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(start = 4.dp)
                             )
+                        } else {
+                            // 第二页：Win + 结算本手（房主）
+                            val isWinner = state.selectedWinnerIds.contains(state.selfId)
+                            Button(
+                                onClick = { if (!isFolded) onToggleMyWinner() },
+                                enabled = !isFolded,
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E),
+                                    disabledContainerColor = Color(0xFFBDBDBD)
+                                )
+                            ) { Text(if (isWinner) "Win ✓" else "Win", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+
+                            if (state.mode == TableMode.HOST) {
+                                Button(
+                                    onClick = { showSettleConfirm = true },
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                                ) { Text("结算本手", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            }
                         }
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = myContribInput,
-                            onValueChange = { myContribInput = it },
-                            label = { Text("我的本手投入") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true
+                }
+                // 页面指示器
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    repeat(2) { idx ->
+                        Box(
+                            modifier = Modifier
+                                .size(if (pagerState.currentPage == idx) 6.dp else 4.dp)
+                                .background(
+                                    if (pagerState.currentPage == idx) Color.DarkGray else Color.LightGray,
+                                    shape = androidx.compose.foundation.shape.CircleShape
+                                )
                         )
-                        Button(onClick = {
-                            val amount = myContribInput.toIntOrNull() ?: 0
-                            onSubmitContribution(amount)
-                        }) { Text("提交") }
                     }
                 }
             }
-        }
-
-        // ========== 底部：房主操作按钮 ==========
-        if (state.mode == TableMode.HOST) {
-            Button(
-                onClick = onSettleAndAdvance,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-            ) { Text("结算本手") }
         }
     }
 }
@@ -780,14 +873,13 @@ private fun CompactPlayerCard(
     player: PlayerState,
     state: TableUiState,
     sortedPlayers: List<PlayerState>,
-    onToggleMyWinner: () -> Unit,
     getMinContribution: (String) -> Int,
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
     val isMe = player.id == state.selfId
-    val isHost = state.mode == TableMode.HOST
     val isOffline = state.disconnectedPlayerIds.contains(player.id)
+    val isFolded = state.foldedPlayerIds.contains(player.id)
 
     val roleTag = buildString {
         if (state.blindsEnabled && state.players.size >= 2) {
@@ -797,6 +889,7 @@ private fun CompactPlayerCard(
         }
     }
     val cardColor = when {
+        isFolded -> Color(0xFFE0E0E0)
         isOffline -> Color(0xFFEEEEEE)
         isMe -> Color(0xFFFFF8E1)
         state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
@@ -843,6 +936,9 @@ private fun CompactPlayerCard(
                         if (state.selectedWinnerIds.contains(player.id)) {
                             Text("[Win]", fontSize = 10.sp, color = Color(0xFF388E3C), fontWeight = FontWeight.Bold)
                         }
+                        if (isFolded) {
+                            Text("[弃牌]", fontSize = 10.sp, color = Color(0xFF9E9E9E), fontWeight = FontWeight.Bold)
+                        }
                         if (isOffline) {
                             Text("[掉线]", fontSize = 10.sp, color = Color.Red)
                         }
@@ -855,7 +951,7 @@ private fun CompactPlayerCard(
                     }
                 }
 
-                // 右侧：筹码 + 投入 + Win按钮（仅自己）
+                // 右侧：筹码 + 投入
                 Column(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -875,25 +971,213 @@ private fun CompactPlayerCard(
                     } else {
                         Text("未提交", fontSize = 11.sp, color = Color.Gray)
                     }
-                    if (isMe) {
-                        val isWinner = state.selectedWinnerIds.contains(player.id)
-                        Button(
-                            onClick = onToggleMyWinner,
-                            modifier = Modifier
-                                .height(28.dp)
-                                .widthIn(min = 72.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 2.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E)
-                            )
-                        ) {
-                            Text(if (isWinner) "Win ✓" else "Win", fontSize = 11.sp, color = Color.White)
-                        }
-                    }
                 }
             }
         }
     }
+}
+
+// ==================== 筹码投入弹窗 ====================
+
+@Composable
+private fun ChipInputDialog(
+    maxChips: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var selectedAmount by remember { mutableIntStateOf(0) }
+    var customMode by remember { mutableStateOf(false) }
+    var customText by remember { mutableStateOf("") }
+
+    // 筹码矩阵值
+    val chipValues = listOf(1, 5, 10, 20, 50, 100, 200)
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("投入筹码", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 已选金额显示
+                Text(
+                    "投入: ${if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1976D2),
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+
+                // 3×3 筹码按键矩阵
+                val rows = listOf(
+                    listOf(0, 1, 2),    // 1, 5, 10
+                    listOf(3, 4, 5),    // 20, 50, 100
+                    listOf(6, 7, 8)     // 200, All-In, 自定义
+                )
+                rows.forEach { rowIndices ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        rowIndices.forEach { idx ->
+                            when {
+                                idx < 7 -> {
+                                    // 数值按键
+                                    val value = chipValues[idx]
+                                    val isSelected = !customMode && selectedAmount == value
+                                    OutlinedButton(
+                                        onClick = {
+                                            customMode = false
+                                            selectedAmount = value
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(44.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (isSelected) Color(0xFF1976D2) else Color.Transparent
+                                        ),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                                    ) {
+                                        Text(
+                                            "$value",
+                                            color = if (isSelected) Color.White else Color.Black,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                                idx == 7 -> {
+                                    // All-In
+                                    val isSelected = !customMode && selectedAmount == maxChips
+                                    OutlinedButton(
+                                        onClick = {
+                                            customMode = false
+                                            selectedAmount = maxChips
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(44.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            containerColor = if (isSelected) Color(0xFFE53935) else Color.Transparent
+                                        ),
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                                    ) {
+                                        Text(
+                                            "All-In!",
+                                            color = if (isSelected) Color.White else Color(0xFFE53935),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    // 自定义：点击后变成输入区
+                                    if (customMode) {
+                                        OutlinedButton(
+                                            onClick = {},
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(44.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                containerColor = Color(0xFFFFF8E1)
+                                            ),
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                                        ) {
+                                            Text(
+                                                customText.ifEmpty { "0" },
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color(0xFF1976D2)
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = {
+                                                customMode = true
+                                                customText = ""
+                                            },
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(44.dp),
+                                            contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                                        ) {
+                                            Text(
+                                                "自定义",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 虚拟数字键盘（仅在自定义模式显示）
+                if (customMode) {
+                    Spacer(Modifier.height(4.dp))
+                    val numRows = listOf(
+                        listOf("1", "2", "3"),
+                        listOf("4", "5", "6"),
+                        listOf("7", "8", "9"),
+                        listOf("00", "0", "⌫")
+                    )
+                    numRows.forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            row.forEach { key ->
+                                Button(
+                                    onClick = {
+                                        when (key) {
+                                            "⌫" -> {
+                                                if (customText.isNotEmpty()) {
+                                                    customText = customText.dropLast(1)
+                                                }
+                                            }
+                                            else -> {
+                                                if (customText.length < 8) {
+                                                    customText += key
+                                                }
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (key == "⌫") Color(0xFFEF9A9A) else Color(0xFFE0E0E0)
+                                    ),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)
+                                ) {
+                                    Text(
+                                        key,
+                                        color = Color.Black,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
+                    onConfirm(amount)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+            ) { Text("确认投入", fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = null
+    )
 }
 
 // ==================== 最近记录界面 ====================
