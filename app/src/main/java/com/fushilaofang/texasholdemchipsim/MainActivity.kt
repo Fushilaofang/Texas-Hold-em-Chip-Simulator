@@ -1489,8 +1489,8 @@ private fun GameScreen(
                 // 与牌桌绘制保持相同的尺寸参数
                 val tableH = minOf(areaH * 0.60f, areaW * 1.2f)
                 val tableW = minOf(areaW * 0.52f, tableH * 0.52f)
-                // 外扩间距：使玩家卡片沿牌桌外轮廓（圆槽形）分布
-                val outerPad = tableW * 0.60f
+                // outerPad = 0：卡片中心落在牌桌桌沿上，卡片骑在边缘（一半在桌内一半在桌外）
+                val outerPad = 0f
 
                 // 在圆槽形（Stadium）外轮廓上按弧长均匀分布的位置计算函数
                 // t ∈ [0,1)，从底部正中开始，顺时针方向
