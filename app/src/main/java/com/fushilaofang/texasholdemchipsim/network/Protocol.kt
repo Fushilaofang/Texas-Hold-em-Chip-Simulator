@@ -31,6 +31,7 @@ sealed class NetworkMessage {
         val blindsState: BlindsState = BlindsState(),
         val blindsEnabled: Boolean = true,
         val sidePotEnabled: Boolean = true,
+        val selectedWinnerIds: Set<String> = emptySet(),
         val gameStarted: Boolean = false
     ) : NetworkMessage()
 
@@ -52,6 +53,16 @@ sealed class NetworkMessage {
     data class ReadyToggle(
         val playerId: String,
         val isReady: Boolean
+    ) : NetworkMessage()
+
+    /**
+     * 玩家切换赢家状态（客户端 → 服务端）
+     */
+    @Serializable
+    @SerialName("win_toggle")
+    data class WinToggle(
+        val playerId: String,
+        val isWinner: Boolean
     ) : NetworkMessage()
 
     @Serializable

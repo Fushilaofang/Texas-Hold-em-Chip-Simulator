@@ -45,6 +45,7 @@ class LanTableServer(
         data class PlayerReconnected(val playerId: String) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
+        data class WinToggleReceived(val playerId: String, val isWinner: Boolean) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -65,6 +66,8 @@ class LanTableServer(
         contributionsProvider: () -> Map<String, Int> = { emptyMap() },
         blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState = { com.fushilaofang.texasholdemchipsim.blinds.BlindsState() },
         blindsEnabledProvider: () -> Boolean = { true },
+        sidePotEnabledProvider: () -> Boolean = { true },
+        selectedWinnerIdsProvider: () -> Set<String> = { emptySet() },
         gameStartedProvider: () -> Boolean = { false },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
@@ -89,6 +92,8 @@ class LanTableServer(
                             contributionsProvider = contributionsProvider,
                             blindsStateProvider = blindsStateProvider,
                             blindsEnabledProvider = blindsEnabledProvider,
+                            sidePotEnabledProvider = sidePotEnabledProvider,
+                            selectedWinnerIdsProvider = selectedWinnerIdsProvider,
                             gameStartedProvider = gameStartedProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
@@ -152,6 +157,7 @@ class LanTableServer(
         blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
         blindsEnabled: Boolean = true,
         sidePotEnabled: Boolean = true,
+        selectedWinnerIds: Set<String> = emptySet(),
         gameStarted: Boolean = false
     ) {
         val message = NetworkMessage.StateSync(
@@ -162,6 +168,7 @@ class LanTableServer(
             blindsState = blindsState,
             blindsEnabled = blindsEnabled,
             sidePotEnabled = sidePotEnabled,
+            selectedWinnerIds = selectedWinnerIds,
             gameStarted = gameStarted
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
@@ -215,6 +222,8 @@ class LanTableServer(
         contributionsProvider: () -> Map<String, Int>,
         blindsStateProvider: () -> com.fushilaofang.texasholdemchipsim.blinds.BlindsState,
         blindsEnabledProvider: () -> Boolean,
+        sidePotEnabledProvider: () -> Boolean,
+        selectedWinnerIdsProvider: () -> Set<String>,
         gameStartedProvider: () -> Boolean,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
@@ -247,6 +256,10 @@ class LanTableServer(
                             onEvent(Event.ReadyToggleReceived(msg.playerId, msg.isReady))
                         }
 
+                        is NetworkMessage.WinToggle -> {
+                            onEvent(Event.WinToggleReceived(msg.playerId, msg.isWinner))
+                        }
+
                         is NetworkMessage.Reconnect -> {
                             val oldId = msg.playerId
                             // 检查是否在掉线等待列表中
@@ -274,6 +287,8 @@ class LanTableServer(
                                     contributions = contributionsProvider(),
                                     blindsState = blindsStateProvider(),
                                     blindsEnabled = blindsEnabledProvider(),
+                                    sidePotEnabled = sidePotEnabledProvider(),
+                                    selectedWinnerIds = selectedWinnerIdsProvider(),
                                     gameStarted = gameStartedProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
@@ -340,6 +355,8 @@ class LanTableServer(
                                 contributions = contributionsProvider(),
                                 blindsState = blindsStateProvider(),
                                 blindsEnabled = blindsEnabledProvider(),
+                                sidePotEnabled = sidePotEnabledProvider(),
+                                selectedWinnerIds = selectedWinnerIdsProvider(),
                                 gameStarted = gameStartedProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
@@ -411,6 +428,7 @@ class LanTableClient(
             val blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
             val blindsEnabled: Boolean = true,
             val sidePotEnabled: Boolean = true,
+            val selectedWinnerIds: Set<String> = emptySet(),
             val gameStarted: Boolean = false
         ) : Event()
 
@@ -513,6 +531,7 @@ class LanTableClient(
                                     blindsState = msg.blindsState,
                                     blindsEnabled = msg.blindsEnabled,
                                     sidePotEnabled = msg.sidePotEnabled,
+                                    selectedWinnerIds = msg.selectedWinnerIds,
                                     gameStarted = msg.gameStarted
                                 )
                             )
@@ -625,6 +644,18 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.ReadyToggle(playerId = playerId, isReady = isReady)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun sendWinToggle(playerId: String, isWinner: Boolean) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.WinToggle(playerId = playerId, isWinner = isWinner)
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()

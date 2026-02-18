@@ -28,7 +28,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -110,9 +109,8 @@ class MainActivity : ComponentActivity() {
                     ScreenState.GAME -> GameScreen(
                         state = state,
                         onSubmitContribution = vm::submitMyContribution,
-                        onToggleWinner = vm::toggleWinner,
+                        onToggleMyWinner = vm::toggleMyWinner,
                         onSettleAndAdvance = vm::settleAndAdvance,
-                        onReset = vm::resetTable,
                         onToggleBlinds = vm::toggleBlinds,
                         onToggleSidePot = vm::toggleSidePot,
                         getMinContribution = vm::getMinContribution,
@@ -549,9 +547,8 @@ private fun LobbyScreen(
 private fun GameScreen(
     state: TableUiState,
     onSubmitContribution: (Int) -> Unit,
-    onToggleWinner: (String) -> Unit,
+    onToggleMyWinner: () -> Unit,
     onSettleAndAdvance: () -> Unit,
-    onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     onToggleSidePot: (Boolean) -> Unit,
     getMinContribution: (String) -> Int,
@@ -721,7 +718,7 @@ private fun GameScreen(
                             player = player,
                             state = state,
                             sortedPlayers = sortedPlayers,
-                            onToggleWinner = onToggleWinner,
+                            onToggleMyWinner = onToggleMyWinner,
                             getMinContribution = getMinContribution,
                             modifier = Modifier
                                 .weight(1f)
@@ -777,22 +774,13 @@ private fun GameScreen(
 
         // ========== 底部：房主操作按钮 ==========
         if (state.mode == TableMode.HOST) {
-            Row(
+            Button(
+                onClick = onSettleAndAdvance,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Button(
-                    onClick = onSettleAndAdvance,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
-                ) { Text("结算本手") }
-                OutlinedButton(
-                    onClick = onReset,
-                    modifier = Modifier.weight(1f)
-                ) { Text("清空输入") }
-            }
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+            ) { Text("结算本手") }
         }
     }
 }
@@ -804,7 +792,7 @@ private fun CompactPlayerCard(
     player: PlayerState,
     state: TableUiState,
     sortedPlayers: List<PlayerState>,
-    onToggleWinner: (String) -> Unit,
+    onToggleMyWinner: () -> Unit,
     getMinContribution: (String) -> Int,
     modifier: Modifier = Modifier
 ) {
@@ -843,6 +831,9 @@ private fun CompactPlayerCard(
                         fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1,
                         modifier = Modifier.weight(1f, fill = false)
                     )
+                    if (state.selectedWinnerIds.contains(player.id)) {
+                        Text("[Win]", fontSize = 10.sp, color = Color(0xFF388E3C), fontWeight = FontWeight.Bold)
+                    }
                     if (isOffline) {
                         Text("[掉线]", fontSize = 10.sp, color = Color.Red)
                     }
@@ -859,14 +850,19 @@ private fun CompactPlayerCard(
                         Text("最低: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
                     }
                 }
-                if (isHost) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = state.selectedWinnerIds.contains(player.id),
-                            onCheckedChange = { onToggleWinner(player.id) },
-                            modifier = Modifier.size(20.dp)
+                if (isMe) {
+                    val isWinner = state.selectedWinnerIds.contains(player.id)
+                    Button(
+                        onClick = onToggleMyWinner,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(28.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E)
                         )
-                        Text("赢家", fontSize = 11.sp, modifier = Modifier.padding(start = 4.dp))
+                    ) {
+                        Text(if (isWinner) "✓ Win" else "Win", fontSize = 11.sp, color = Color.White)
                     }
                 }
             }

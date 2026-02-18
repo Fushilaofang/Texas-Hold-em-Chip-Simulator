@@ -580,6 +580,31 @@ class TableViewModel(
             if (!newSet.add(playerId)) newSet.remove(playerId)
             state.copy(selectedWinnerIds = newSet)
         }
+        if (_uiState.value.mode == TableMode.HOST) {
+            syncToClients()
+        }
+    }
+
+    /**
+     * 玩家自行切换赢家状态：房主直接处理，客户端发送到服务端
+     */
+    fun toggleMyWinner() {
+        val state = _uiState.value
+        val selfId = state.selfId
+        if (selfId.isBlank()) return
+        val isCurrentlyWinner = state.selectedWinnerIds.contains(selfId)
+        val newIsWinner = !isCurrentlyWinner
+        if (state.mode == TableMode.HOST) {
+            toggleWinner(selfId)
+        } else {
+            client.sendWinToggle(selfId, newIsWinner)
+            // 客户端先乐观更新本地状态，等待服务端同步确认
+            _uiState.update { s ->
+                val newSet = s.selectedWinnerIds.toMutableSet()
+                if (newIsWinner) newSet.add(selfId) else newSet.remove(selfId)
+                s.copy(selectedWinnerIds = newSet)
+            }
+        }
     }
 
     // ==================== 结算已整合到 settleAndAdvance ====================
@@ -612,6 +637,7 @@ class TableViewModel(
                     blindsState = state.blindsState,
                     blindsEnabled = state.blindsEnabled,
                     sidePotEnabled = state.sidePotEnabled,
+                    selectedWinnerIds = state.selectedWinnerIds,
                     gameStarted = state.gameStarted
                 )
             }
@@ -632,6 +658,8 @@ class TableViewModel(
             },
             blindsStateProvider = { _uiState.value.blindsState },
             blindsEnabledProvider = { _uiState.value.blindsEnabled },
+            sidePotEnabledProvider = { _uiState.value.sidePotEnabled },
+            selectedWinnerIdsProvider = { _uiState.value.selectedWinnerIds },
             gameStartedProvider = { _uiState.value.gameStarted },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
@@ -702,6 +730,18 @@ class TableViewModel(
                 }
                 syncToClients()
             }
+            is LanTableServer.Event.WinToggleReceived -> {
+                _uiState.update { state ->
+                    val newSet = state.selectedWinnerIds.toMutableSet()
+                    if (event.isWinner) newSet.add(event.playerId) else newSet.remove(event.playerId)
+                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                    state.copy(
+                        selectedWinnerIds = newSet,
+                        info = "$playerName ${if (event.isWinner) "标记为赢家" else "取消赢家"}"
+                    )
+                }
+                syncToClients()
+            }
             else -> Unit
         }
     }
@@ -724,6 +764,7 @@ class TableViewModel(
                         blindsState = event.blindsState,
                         blindsEnabled = event.blindsEnabled,
                         sidePotEnabled = event.sidePotEnabled,
+                        selectedWinnerIds = event.selectedWinnerIds,
                         gameStarted = event.gameStarted,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
