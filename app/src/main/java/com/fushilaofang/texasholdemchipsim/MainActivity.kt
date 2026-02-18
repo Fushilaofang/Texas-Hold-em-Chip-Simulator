@@ -1589,12 +1589,18 @@ private fun GameScreen(
                     // 密度转换
                     val density = LocalDensity.current
                     val cardWidthDp = 140.dp
-                    val cardTotalHeightDp = 120.dp // 卡片+标签总高度预估
+                    // 标签行始终占固定高度 22dp（无标签时 Spacer 占位）
+                    // 胶囊高度约 52dp（avatar 46dp + 上下 padding 各 2dp + Row 本身）
+                    // offsetY = py - tagRowHeight - capsuleHeight/2
+                    // 使胶囊中心恒等于 py，左右完全对称
+                    val tagRowHeightDp = 22.dp
+                    val capsuleHeightDp = 52.dp
                     val cardWidthPx = with(density) { cardWidthDp.toPx() }
-                    val cardTotalHeightPx = with(density) { cardTotalHeightDp.toPx() }
+                    val tagRowHeightPx = with(density) { tagRowHeightDp.toPx() }
+                    val capsuleHeightPx = with(density) { capsuleHeightDp.toPx() }
 
                     val offsetX = with(density) { (px - cardWidthPx / 2f).toDp() }
-                    val offsetY = with(density) { (py - cardTotalHeightPx / 2f).toDp() }
+                    val offsetY = with(density) { (py - tagRowHeightPx - capsuleHeightPx / 2f).toDp() }
 
                     val seatIdx = index
                     val isCurrentTurn = player.id == state.currentTurnPlayerId && state.currentRound != BettingRound.SHOWDOWN
@@ -1620,13 +1626,15 @@ private fun GameScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            // 上方：角色标签（庄/盲注/状态）
-                            if (roleTag.isNotEmpty() || isFolded || isWinner || isOffline) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 2.dp)
-                                ) {
+                            // 上方：角色标签（庄/盲注/状态）——始终占 22dp 高度保证胶囊居中对齐
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .height(tagRowHeightDp)
+                                    .padding(bottom = 2.dp)
+                            ) {
+                                if (roleTag.isNotEmpty() || isFolded || isWinner || isOffline) {
                                     if (roleTag.isNotEmpty()) {
                                         Text(
                                             roleTag,
@@ -1681,8 +1689,8 @@ private fun GameScreen(
                                                 .padding(horizontal = 4.dp, vertical = 1.dp)
                                         )
                                     }
-                                }
-                            }
+                                } // end if 有标签
+                            } // end Row 标签行
 
                             // 胶囊卡片主体
                             val capsuleColor = when {
