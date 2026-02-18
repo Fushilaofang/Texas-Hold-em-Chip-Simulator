@@ -1307,30 +1307,30 @@ private fun GameScreen(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
-                // 保证 tableW > tableH，圆槽形在竖屏下也正确
-                val tableW = size.width * 0.86f
-                val tableH = minOf(size.height * 0.64f, tableW * 0.52f)
-                val cornerR = tableH / 2f
+                // 竖向圆槽形：高 > 宽，旋转90度后的牌桌效果
+                val tableH = size.height * 0.72f
+                val tableW = minOf(size.width * 0.58f, tableH * 0.52f)
+                val cornerR = tableW / 2f
 
                 // 用 Path 绘制圆槽形（Stadium/Track 形状）
+                // 竖向 stadium：r = w/2，圆弧在上下两端
                 fun stadiumPath(left: Float, top: Float, w: Float, h: Float): Path {
-                    val r = h / 2f
+                    val r = w / 2f
                     return Path().apply {
-                        moveTo(left + r, top)
-                        lineTo(left + w - r, top)
+                        moveTo(left + r, top + r)
                         arcTo(
                             rect = androidx.compose.ui.geometry.Rect(
-                                Offset(left + w - 2 * r, top), Size(2 * r, h)
+                                Offset(left, top), Size(2 * r, 2 * r)
                             ),
-                            startAngleDegrees = -90f, sweepAngleDegrees = 180f,
+                            startAngleDegrees = 180f, sweepAngleDegrees = 180f,
                             forceMoveTo = false
                         )
-                        lineTo(left + r, top + h)
+                        lineTo(left + w, top + h - r)
                         arcTo(
                             rect = androidx.compose.ui.geometry.Rect(
-                                Offset(left, top), Size(2 * r, h)
+                                Offset(left, top + h - 2 * r), Size(2 * r, 2 * r)
                             ),
-                            startAngleDegrees = 90f, sweepAngleDegrees = 180f,
+                            startAngleDegrees = 0f, sweepAngleDegrees = 180f,
                             forceMoveTo = false
                         )
                         close()
@@ -1351,7 +1351,7 @@ private fun GameScreen(
 
                 // -------- 装饰花纹（保持原色调）--------
 
-                // 1. 内圈描边（内缩 12dp 的相似圆槽形）
+                // 1. 内圈描边（内缩 14dp 的相似竖向圆槽形）
                 val innerInset = 14f
                 val innerPath = stadiumPath(
                     tableL + innerInset, tableT + innerInset,
@@ -1363,7 +1363,7 @@ private fun GameScreen(
                     style = Stroke(width = 1.8f)
                 )
 
-                // 2. 再内圈细线（赌场桌常见双线圈）
+                // 2. 再内圈细线
                 val inner2Inset = 22f
                 drawPath(
                     path = stadiumPath(
@@ -1374,21 +1374,21 @@ private fun GameScreen(
                     style = Stroke(width = 1f)
                 )
 
-                // 3. 横向中线（淡色分隔线）
+                // 3. 纵向中线（淡色分隔线）
                 drawLine(
                     color = Color(0x30A09070),
-                    start = Offset(tableL + cornerR, cy),
-                    end = Offset(tableL + tableW - cornerR, cy),
+                    start = Offset(cx, tableT + cornerR),
+                    end = Offset(cx, tableT + tableH - cornerR),
                     strokeWidth = 1f
                 )
 
-                // 4. 菱形网格装饰（仅在矩形中段内绘制，淡色）
+                // 4. 网格装饰（仅在矩形中段内绘制，淡色）
                 val gridColor = Color(0x18A09070)
                 val gridStep = 28f
-                val rectLeft = tableL + cornerR
-                val rectRight = tableL + tableW - cornerR
-                val rectTop = tableT + 8f
-                val rectBottom = tableT + tableH - 8f
+                val rectLeft = tableL + 8f
+                val rectRight = tableL + tableW - 8f
+                val rectTop = tableT + cornerR
+                val rectBottom = tableT + tableH - cornerR
                 var xi = rectLeft
                 while (xi <= rectRight) {
                     drawLine(
@@ -1410,33 +1410,33 @@ private fun GameScreen(
                     yi += gridStep
                 }
 
-                // 5. 两端半圆扇形装饰（放射线）
+                // 5. 上下两端半圆扇形装饰（放射线）
                 val fanColor = Color(0x15907050)
                 val fanLineCount = 8
-                // 左端半圆
-                val leftCircleCx = tableL + cornerR
+                // 上端半圆
+                val topCircleCy = tableT + cornerR
                 for (i in 0 until fanLineCount) {
-                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1))) - Math.PI / 2
+                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1))) + Math.PI
                     drawLine(
                         color = fanColor,
-                        start = Offset(leftCircleCx, cy),
+                        start = Offset(cx, topCircleCy),
                         end = Offset(
-                            (leftCircleCx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
-                            (cy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
+                            (cx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
+                            (topCircleCy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
                         ),
                         strokeWidth = 1f
                     )
                 }
-                // 右端半圆
-                val rightCircleCx = tableL + tableW - cornerR
+                // 下端半圆
+                val bottomCircleCy = tableT + tableH - cornerR
                 for (i in 0 until fanLineCount) {
-                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1))) + Math.PI / 2
+                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1)))
                     drawLine(
                         color = fanColor,
-                        start = Offset(rightCircleCx, cy),
+                        start = Offset(cx, bottomCircleCy),
                         end = Offset(
-                            (rightCircleCx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
-                            (cy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
+                            (cx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
+                            (bottomCircleCy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
                         ),
                         strokeWidth = 1f
                     )
@@ -1481,11 +1481,11 @@ private fun GameScreen(
                 val areaH = constraints.maxHeight.toFloat()
                 val cx = areaW / 2f
                 val cy = areaH / 2f
-                // 玩家排列半径与牌桌尺寸一致，避免竖屏时超出桌面
-                val tableW = areaW * 0.86f
-                val tableH = minOf(areaH * 0.64f, tableW * 0.52f)
-                val radiusX = tableW / 2f * 0.96f
-                val radiusY = tableH / 2f * 1.35f  // 玩家卡片沿桌边外侧排列
+                // 玩家排列椭圆轨迹匹配竖向牌桌
+                val tableH = areaH * 0.72f
+                val tableW = minOf(areaW * 0.58f, tableH * 0.52f)
+                val radiusX = tableW / 2f * 1.55f  // 横向半径：桌子较窄，向外扩展让卡片不重叠
+                val radiusY = tableH / 2f * 1.08f  // 纵向半径：沿桌边外侧
 
                 // 计算每位玩家的角度位置（从底部正中开始，顺时针）
                 sortedPlayers.forEachIndexed { index, player ->
@@ -1496,8 +1496,8 @@ private fun GameScreen(
 
                     // 密度转换
                     val density = LocalDensity.current
-                    val cardWidthDp = 110.dp
-                    val cardTotalHeightDp = 100.dp // 卡片+标签总高度预估
+                    val cardWidthDp = 126.dp
+                    val cardTotalHeightDp = 110.dp // 卡片+标签总高度预估
                     val cardWidthPx = with(density) { cardWidthDp.toPx() }
                     val cardTotalHeightPx = with(density) { cardTotalHeightDp.toPx() }
 
@@ -1522,6 +1522,7 @@ private fun GameScreen(
                         modifier = Modifier
                             .offset(x = offsetX, y = offsetY)
                             .width(cardWidthDp)
+                            .padding(2.dp)
                     ) {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -1613,12 +1614,12 @@ private fun GameScreen(
                                     AvatarImage(
                                         avatarBase64 = player.avatarBase64,
                                         name = player.name,
-                                        size = 32
+                                        size = 36
                                     )
                                     if (player.id == state.selfId) {
                                         Box(
                                             modifier = Modifier
-                                                .size(8.dp)
+                                                .size(9.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF43A047))
                                                 .align(Alignment.BottomEnd)
@@ -1630,7 +1631,7 @@ private fun GameScreen(
                                 Column {
                                     Text(
                                         player.name,
-                                        fontSize = 12.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
                                         maxLines = 1,
@@ -1638,7 +1639,7 @@ private fun GameScreen(
                                     )
                                     Text(
                                         "${player.chips}",
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         color = Color(0xFFE0E0E0)
                                     )
                                 }
@@ -1653,7 +1654,7 @@ private fun GameScreen(
                                     if (roundContrib != null && roundContrib > 0) {
                                         Text(
                                             "$ $roundContrib",
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF5D4E37)
                                         )
@@ -1661,7 +1662,7 @@ private fun GameScreen(
                                     if (isCurrentTurn) {
                                         Text(
                                             "⬤ 行动中",
-                                            fontSize = 9.sp,
+                                            fontSize = 10.sp,
                                             color = Color(0xFFE65100),
                                             fontWeight = FontWeight.Bold
                                         )
