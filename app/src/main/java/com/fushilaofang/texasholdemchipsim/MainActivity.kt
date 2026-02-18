@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -698,37 +699,24 @@ private fun GameScreen(
 
         Spacer(Modifier.height(4.dp))
 
-        // ========== 玩家网格（自适应填满，一次显示全部） ==========
-        val playerRows = sortedPlayers.chunked(2)
+        // ========== 玩家列表（纵向，均匀填满，无需滚动） ==========
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            playerRows.forEach { rowPlayers ->
-                Row(
+            sortedPlayers.forEach { player ->
+                CompactPlayerCard(
+                    player = player,
+                    state = state,
+                    sortedPlayers = sortedPlayers,
+                    onToggleMyWinner = onToggleMyWinner,
+                    getMinContribution = getMinContribution,
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    rowPlayers.forEach { player ->
-                        CompactPlayerCard(
-                            player = player,
-                            state = state,
-                            sortedPlayers = sortedPlayers,
-                            onToggleMyWinner = onToggleMyWinner,
-                            getMinContribution = getMinContribution,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                        )
-                    }
-                    if (rowPlayers.size < 2) {
-                        Spacer(Modifier.weight(1f))
-                    }
-                }
+                        .fillMaxWidth()
+                )
             }
         }
 
@@ -821,53 +809,90 @@ private fun CompactPlayerCard(
             modifier = Modifier.fillMaxSize(),
             colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
-            Column(
-                modifier = Modifier.padding(6.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "$roleTag${player.name}",
-                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    if (state.selectedWinnerIds.contains(player.id)) {
-                        Text("[Win]", fontSize = 10.sp, color = Color(0xFF388E3C), fontWeight = FontWeight.Bold)
-                    }
-                    if (isOffline) {
-                        Text("[掉线]", fontSize = 10.sp, color = Color.Red)
-                    }
-                }
-                Text("筹码: ${player.chips}", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                if (!submittedAmount.isNullOrBlank()) {
-                    Text("投入: $submittedAmount", fontSize = 11.sp, color = Color(0xFF388E3C))
-                } else {
-                    Text("未提交", fontSize = 11.sp, color = Color.Gray)
-                }
-                if (state.blindsEnabled && state.players.size >= 2) {
-                    val minContrib = getMinContribution(player.id)
-                    if (minContrib > 0) {
-                        Text("最低: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
-                    }
-                }
-                if (isMe) {
-                    val isWinner = state.selectedWinnerIds.contains(player.id)
-                    Button(
-                        onClick = onToggleMyWinner,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(28.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E)
-                        )
+                // 左侧：身份信息
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(if (isWinner) "✓ Win" else "Win", fontSize = 11.sp, color = Color.White)
+                        if (roleTag.isNotEmpty()) {
+                            Text(
+                                roleTag,
+                                fontSize = 10.sp,
+                                color = Color(0xFF1565C0),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            player.name,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        if (state.selectedWinnerIds.contains(player.id)) {
+                            Text("[Win]", fontSize = 10.sp, color = Color(0xFF388E3C), fontWeight = FontWeight.Bold)
+                        }
+                        if (isOffline) {
+                            Text("[掉线]", fontSize = 10.sp, color = Color.Red)
+                        }
+                    }
+                    if (state.blindsEnabled && state.players.size >= 2) {
+                        val minContrib = getMinContribution(player.id)
+                        if (minContrib > 0) {
+                            Text("最低投入: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
+                        }
+                    }
+                }
+
+                // 右侧：筹码 + 投入 + Win按钮（仅自己）
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        "筹码 ${player.chips}",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (!submittedAmount.isNullOrBlank()) {
+                        Text(
+                            "投入 $submittedAmount",
+                            fontSize = 12.sp,
+                            color = Color(0xFF388E3C),
+                            fontWeight = FontWeight.Medium
+                        )
+                    } else {
+                        Text("未提交", fontSize = 11.sp, color = Color.Gray)
+                    }
+                    if (isMe) {
+                        val isWinner = state.selectedWinnerIds.contains(player.id)
+                        Button(
+                            onClick = onToggleMyWinner,
+                            modifier = Modifier
+                                .height(28.dp)
+                                .widthIn(min = 72.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E)
+                            )
+                        ) {
+                            Text(if (isWinner) "Win ✓" else "Win", fontSize = 11.sp, color = Color.White)
+                        }
                     }
                 }
             }
         }
-
     }
 }
 
