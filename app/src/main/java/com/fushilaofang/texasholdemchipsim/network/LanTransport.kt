@@ -308,33 +308,53 @@ class LanTableServer(
 
                         is NetworkMessage.Reconnect -> {
                             val oldId = msg.playerId
-                            // 检查是否被踢出
+                            // 检查是否被踢出，需要房主审批才能重新加入
                             if (kickedPlayerIds.contains(oldId)) {
-                                val kickedMsg = NetworkMessage.Kicked(reason = "你已被房主移出本局游戏")
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), kickedMsg))
+                                // 通知客户端等待审批
+                                val pendingMsg = NetworkMessage.JoinPending(message = "等待房主审批加入请求...")
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), pendingMsg))
                                 writer.newLine()
                                 writer.flush()
-                                socket.close()
-                                return@launch
-                            }
-                            // 检查是否在掉线等待列表中
-                            val isWaitingReconnect = synchronized(disconnectedLock) {
-                                disconnectedPlayers.containsKey(oldId)
-                            }
-                            // 也检查是否存在于玩家列表
-                            val existsInPlayers = hostPlayersProvider().any { it.id == oldId }
 
-                            if (isWaitingReconnect || existsInPlayers) {
-                                assignedId = oldId
-                                synchronized(disconnectedLock) { disconnectedPlayers.remove(oldId) }
+                                val requestId = UUID.randomUUID().toString()
+                                val deferred = CompletableDeferred<Boolean>()
+                                synchronized(pendingJoinsLock) {
+                                    pendingJoins[requestId] = PendingJoin(requestId, msg.playerName, 0, deferred)
+                                }
+                                onEvent(Event.JoinApprovalRequested(requestId, msg.playerName, 0))
 
-                                // 发送重连成功
-                                val accepted = NetworkMessage.ReconnectAccepted(playerId = oldId)
+                                // 挂起等待房主审批
+                                val approved = deferred.await()
+
+                                if (!approved) {
+                                    val kickedMsg = NetworkMessage.Kicked(reason = "房主拒绝了你的加入请求")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), kickedMsg))
+                                    writer.newLine()
+                                    writer.flush()
+                                    socket.close()
+                                    return@launch
+                                }
+                                // 审批通过，从黑名单移除，作为新玩家加入
+                                kickedPlayerIds.remove(oldId)
+                                kickedPlayerNames.remove(msg.playerName)
+
+                                // 分配新 ID 作为新玩家加入
+                                val newPlayerId = UUID.randomUUID().toString()
+                                assignedId = newPlayerId
+                                val seatOrder = hostPlayersProvider().size
+                                val joined = PlayerState(
+                                    id = newPlayerId,
+                                    name = msg.playerName,
+                                    chips = hostPlayersProvider().firstOrNull()?.chips ?: 1000,
+                                    seatOrder = seatOrder
+                                )
+                                onPlayerJoined(joined)
+
+                                val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = newPlayerId)
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
                                 writer.newLine()
                                 writer.flush()
 
-                                // 发送最新状态
                                 val sync = NetworkMessage.StateSync(
                                     players = hostPlayersProvider(),
                                     handCounter = handCounterProvider(),
@@ -348,15 +368,9 @@ class LanTableServer(
                                 writer.newLine()
                                 writer.flush()
 
-                                // 更新客户端连接
                                 synchronized(clientsLock) {
-                                    // 关闭旧连接（如有）
-                                    clients.remove(oldId)?.let { old ->
-                                        old.readerJob.cancel()
-                                        runCatching { old.socket.close() }
-                                    }
-                                    clients[oldId] = ClientConnection(
-                                        playerId = oldId,
+                                    clients[newPlayerId] = ClientConnection(
+                                        playerId = newPlayerId,
                                         socket = socket,
                                         writer = writer,
                                         readerJob = this.coroutineContext[Job]
@@ -364,15 +378,67 @@ class LanTableServer(
                                     )
                                 }
 
-                                onEvent(Event.PlayerReconnected(oldId))
+                                onEvent(Event.PlayerJoined(joined))
+
+                                // 跳过后面的普通重连检查，继续监听消息
                             } else {
-                                // 找不到该玩家，拒绝重连
-                                val err = NetworkMessage.Error(reason = "重连失败: 找不到玩家记录")
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), err))
-                                writer.newLine()
-                                writer.flush()
-                                socket.close()
-                                return@launch
+                                // 检查是否在掉线等待列表中
+                                val isWaitingReconnect = synchronized(disconnectedLock) {
+                                    disconnectedPlayers.containsKey(oldId)
+                                }
+                                // 也检查是否存在于玩家列表
+                                val existsInPlayers = hostPlayersProvider().any { it.id == oldId }
+
+                                if (isWaitingReconnect || existsInPlayers) {
+                                    assignedId = oldId
+                                    synchronized(disconnectedLock) { disconnectedPlayers.remove(oldId) }
+
+                                    // 发送重连成功
+                                    val accepted = NetworkMessage.ReconnectAccepted(playerId = oldId)
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
+                                    writer.newLine()
+                                    writer.flush()
+
+                                    // 发送最新状态
+                                    val sync = NetworkMessage.StateSync(
+                                        players = hostPlayersProvider(),
+                                        handCounter = handCounterProvider(),
+                                        transactions = txProvider().takeLast(50),
+                                        contributions = contributionsProvider(),
+                                        blindsState = blindsStateProvider(),
+                                        blindsEnabled = blindsEnabledProvider(),
+                                        gameStarted = gameStartedProvider()
+                                    )
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                    writer.newLine()
+                                    writer.flush()
+
+                                    // 更新客户端连接
+                                    synchronized(clientsLock) {
+                                        // 关闭旧连接（如有）
+                                        clients.remove(oldId)?.let { old ->
+                                            old.readerJob.cancel()
+                                            runCatching { old.socket.close() }
+                                        }
+                                        clients[oldId] = ClientConnection(
+                                            playerId = oldId,
+                                            socket = socket,
+                                            writer = writer,
+                                            readerJob = this.coroutineContext[Job]
+                                                ?: error("missing coroutine job")
+                                        )
+                                    }
+
+                                    onEvent(Event.PlayerReconnected(oldId))
+                                } else {
+                                    // 找不到该玩家，拒绝重连
+                                    val err = NetworkMessage.Error(reason = "重连失败: 找不到玩家记录")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    writer.newLine()
+                                    writer.flush()
+                                    socket.close()
+                                    return@launch
+                                }
                             }
                         }
 
@@ -404,8 +470,8 @@ class LanTableServer(
                                 val approved = deferred.await()
 
                                 if (!approved) {
-                                    val err = NetworkMessage.Error(reason = "房主拒绝了你的加入请求")
-                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    val kickedMsg = NetworkMessage.Kicked(reason = "房主拒绝了你的加入请求")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), kickedMsg))
                                     writer.newLine()
                                     writer.flush()
                                     socket.close()

@@ -756,7 +756,11 @@ class TableViewModel(
             }
             is LanTableClient.Event.StateSync -> {
                 _uiState.update {
-                    val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
+                    val newScreen = when {
+                        event.gameStarted -> ScreenState.GAME
+                        it.screen == ScreenState.GAME || it.screen == ScreenState.LOBBY -> ScreenState.LOBBY
+                        else -> it.screen
+                    }
                     it.copy(
                         screen = newScreen,
                         players = event.players,
