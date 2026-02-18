@@ -1753,7 +1753,7 @@ private fun GameScreen(
                             if ((roundContrib != null && roundContrib > 0) || isCurrentTurn) {
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(top = 2.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
                                 ) {
                                     if (roundContrib != null && roundContrib > 0) {
                                         Text(
