@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +109,7 @@ class MainActivity : ComponentActivity() {
                         onLeave = vm::goHome,
                         onToggleBlinds = vm::toggleBlinds,
                         onToggleSidePot = vm::toggleSidePot,
+                        onUpdateBlindsConfig = vm::updateBlindsConfig,
                         onMovePlayer = vm::movePlayer,
                         onSetInitialDealer = vm::setInitialDealer
                     )
@@ -118,6 +121,7 @@ class MainActivity : ComponentActivity() {
                         onSettleAndAdvance = vm::settleAndAdvance,
                         onToggleBlinds = vm::toggleBlinds,
                         onToggleSidePot = vm::toggleSidePot,
+                        onUpdateBlindsConfig = vm::updateBlindsConfig,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -420,6 +424,7 @@ private fun LobbyScreen(
     onLeave: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     onToggleSidePot: (Boolean) -> Unit,
+    onUpdateBlindsConfig: (Int, Int) -> Unit,
     onMovePlayer: (String, Int) -> Unit,
     onSetInitialDealer: (Int) -> Unit
 ) {
@@ -461,6 +466,44 @@ private fun LobbyScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("盲注自动轮转", fontSize = 13.sp)
                 Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
+            }
+            // 盲注金额编辑
+            if (state.blindsEnabled) {
+                var sbText by remember(state.blindsState.config.smallBlind) {
+                    mutableStateOf(state.blindsState.config.smallBlind.toString())
+                }
+                var bbText by remember(state.blindsState.config.bigBlind) {
+                    mutableStateOf(state.blindsState.config.bigBlind.toString())
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = sbText,
+                        onValueChange = { sbText = it.filter { c -> c.isDigit() } },
+                        label = { Text("小盲") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = bbText,
+                        onValueChange = { bbText = it.filter { c -> c.isDigit() } },
+                        label = { Text("大盲") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            val sb = sbText.toIntOrNull() ?: state.blindsState.config.smallBlind
+                            val bb = bbText.toIntOrNull() ?: state.blindsState.config.bigBlind
+                            onUpdateBlindsConfig(sb, bb)
+                        },
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) { Text("应用") }
+                }
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("边池规则", fontSize = 13.sp)
@@ -597,6 +640,7 @@ private fun GameScreen(
     onSettleAndAdvance: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     onToggleSidePot: (Boolean) -> Unit,
+    onUpdateBlindsConfig: (Int, Int) -> Unit,
     getMinContribution: (String) -> Int,
     onLeave: () -> Unit
 ) {
@@ -608,6 +652,7 @@ private fun GameScreen(
 
     var showMenu by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
+    var showBlindEditDialog by remember { mutableStateOf(false) }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     if (showExitConfirm) {
         androidx.compose.material3.AlertDialog(
@@ -622,6 +667,48 @@ private fun GameScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showExitConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 盲注修改弹窗
+    if (showBlindEditDialog) {
+        var sbText by remember { mutableStateOf(state.blindsState.config.smallBlind.toString()) }
+        var bbText by remember { mutableStateOf(state.blindsState.config.bigBlind.toString()) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showBlindEditDialog = false },
+            title = { Text("修改盲注金额", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("修改后将在下一手生效", fontSize = 13.sp, color = Color.Gray)
+                    OutlinedTextField(
+                        value = sbText,
+                        onValueChange = { sbText = it.filter { c -> c.isDigit() } },
+                        label = { Text("小盲") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = bbText,
+                        onValueChange = { bbText = it.filter { c -> c.isDigit() } },
+                        label = { Text("大盲") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val sb = sbText.toIntOrNull() ?: state.blindsState.config.smallBlind
+                    val bb = bbText.toIntOrNull() ?: state.blindsState.config.bigBlind
+                    onUpdateBlindsConfig(sb, bb)
+                    showBlindEditDialog = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showBlindEditDialog = false }) { Text("取消") }
             }
         )
     }
@@ -712,6 +799,17 @@ private fun GameScreen(
                             },
                             onClick = {}
                         )
+                        if (state.blindsEnabled) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        "修改盲注 (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
+                                        fontSize = 14.sp
+                                    )
+                                },
+                                onClick = { showMenu = false; showBlindEditDialog = true }
+                            )
+                        }
                         HorizontalDivider()
                     }
                     if (state.mode == TableMode.HOST) {

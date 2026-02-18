@@ -298,7 +298,19 @@ class TableViewModel(
                 smallBlind = smallBlind.coerceAtLeast(1),
                 bigBlind = bigBlind.coerceAtLeast(2)
             )
-            state.copy(blindsState = state.blindsState.copy(config = newConfig))
+            state.copy(
+                blindsState = state.blindsState.copy(config = newConfig),
+                savedSmallBlind = newConfig.smallBlind,
+                savedBigBlind = newConfig.bigBlind
+            )
+        }
+        // 持久化 + 同步
+        prefs.edit()
+            .putInt("small_blind", _uiState.value.savedSmallBlind)
+            .putInt("big_blind", _uiState.value.savedBigBlind)
+            .apply()
+        if (_uiState.value.mode == TableMode.HOST) {
+            syncToClients()
         }
     }
 
@@ -626,16 +638,26 @@ class TableViewModel(
             return
         }
 
-        // 初始化盲注位（使用大厅设置的庄家索引）
+        // 初始化盲注位（使用大厅设置的庄家索引，跳过筹码为 0 的玩家）
         val safeDealer = state.initialDealerIndex.coerceIn(0, state.players.size - 1)
-        val blinds = blindsManager.computeFromDealer(safeDealer, state.players.size, state.blindsState.config)
+        val blinds = if (state.blindsEnabled) {
+            blindsManager.computeFromDealerSkippingBroke(safeDealer, state.players, state.blindsState.config)
+        } else {
+            blindsManager.computeFromDealer(safeDealer, state.players.size, state.blindsState.config)
+        }
         val blindPrefills = if (state.blindsEnabled) {
             blindsManager.calculateBlindPrefills(state.players, blinds)
         } else emptyMap()
 
+        // 盲注立即从筹码扣除
+        val playersAfterBlinds = if (state.blindsEnabled) {
+            blindsManager.deductBlinds(state.players, blindPrefills)
+        } else state.players
+
         // 翻牌前：盲注计入 roundContributions，首位行动 = UTG
         val roundContribs = if (state.blindsEnabled) blindPrefills else emptyMap()
         val tmpState = state.copy(
+            players = playersAfterBlinds,
             blindsState = blinds,
             foldedPlayerIds = emptySet()
         )
@@ -644,12 +666,13 @@ class TableViewModel(
         } else {
             getPostFlopFirstPlayerId(tmpState, blinds)
         }
-        val firstName = state.players.sortedBy { it.seatOrder }.firstOrNull { it.id == firstTurn }?.name ?: "?"
+        val firstName = playersAfterBlinds.sortedBy { it.seatOrder }.firstOrNull { it.id == firstTurn }?.name ?: "?"
 
         _uiState.update {
             it.copy(
                 screen = ScreenState.GAME,
                 gameStarted = true,
+                players = playersAfterBlinds,
                 blindsState = blinds,
                 blindContributions = blindPrefills,
                 contributionInputs = emptyMap(), // 总投入从空开始，盲注仅在 roundContributions
@@ -725,9 +748,16 @@ class TableViewModel(
             val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
+            // 结算前恢复被预扣的盲注（避免结算引擎双重扣除）
+            val playersForSettlement = if (state.blindsEnabled) {
+                blindsManager.restoreBlindsForSettlement(state.players, state.blindContributions)
+            } else {
+                state.players
+            }
+
             val result = settlementEngine.settleHandSimple(
                 handId = handId,
-                players = state.players,
+                players = playersForSettlement,
                 contributions = effectiveContributions,
                 winnerIds = state.selectedWinnerIds.toList(),
                 timestamp = now
@@ -745,21 +775,24 @@ class TableViewModel(
 
         // ---------- 2) 轮转庄位 + 设置下一手翻牌前 ----------
         val nextHandCounter = if (hasContributions) state.handCounter + 1 else state.handCounter
-        val newBlinds = blindsManager.rotate(state.blindsState, playersAfterSettle.size)
 
         if (state.blindsEnabled) {
+            // 使用跳过破产玩家的轮转
+            val newBlinds = blindsManager.rotateSkippingBroke(state.blindsState, playersAfterSettle)
             val blindPrefills = blindsManager.calculateBlindPrefills(playersAfterSettle, newBlinds)
+            // 盲注立即扣除
+            val playersAfterBlinds = blindsManager.deductBlinds(playersAfterSettle, blindPrefills)
 
             // 设置下一手的翻牌前
             val tmpState = state.copy(
-                players = playersAfterSettle,
+                players = playersAfterBlinds,
                 blindsState = newBlinds,
                 foldedPlayerIds = emptySet(),
                 contributionInputs = emptyMap(),
                 roundContributions = blindPrefills
             )
             val firstTurn = getPreFlopFirstPlayerId(tmpState, newBlinds)
-            val firstName = playersAfterSettle.sortedBy { it.seatOrder }
+            val firstName = playersAfterBlinds.sortedBy { it.seatOrder }
                 .firstOrNull { it.id == firstTurn }?.name ?: "?"
 
             val infoText = buildString {
@@ -769,7 +802,7 @@ class TableViewModel(
 
             _uiState.update {
                 it.copy(
-                    players = playersAfterSettle,
+                    players = playersAfterBlinds,
                     handCounter = nextHandCounter,
                     blindsState = newBlinds,
                     blindContributions = blindPrefills,
@@ -786,6 +819,7 @@ class TableViewModel(
                 )
             }
         } else {
+            val newBlinds = blindsManager.rotate(state.blindsState, playersAfterSettle.size)
             val tmpState = state.copy(
                 players = playersAfterSettle,
                 blindsState = newBlinds,

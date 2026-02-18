@@ -24,7 +24,11 @@ data class BlindsState(
 )
 
 /**
- * 盲注管理器：负责庄位轮转与盲注预填
+ * 盲注管理器：负责庄位轮转与盲注预填。
+ *
+ * 核心改动：
+ * - 计算 SB/BB 位时跳过筹码为 0 的已破产玩家
+ * - 盲注立即从玩家筹码扣除
  */
 class BlindsManager {
 
@@ -41,7 +45,55 @@ class BlindsManager {
     }
 
     /**
-     * 庄位前移一位，重新计算大小盲位置
+     * 指定庄家位初始化，跳过筹码为 0 的玩家
+     */
+    fun computeFromDealerSkippingBroke(
+        dealerIndex: Int,
+        players: List<PlayerState>,
+        config: BlindsConfig
+    ): BlindsState {
+        val sorted = players.sortedBy { it.seatOrder }
+        val n = sorted.size
+        if (n < 2) return computePositions(dealerIndex, n, config)
+
+        val safeDealer = dealerIndex.coerceIn(0, n - 1)
+
+        return if (n == 2) {
+            // 单挑：庄家 = 小盲
+            BlindsState(
+                dealerIndex = safeDealer,
+                smallBlindIndex = safeDealer,
+                bigBlindIndex = (safeDealer + 1) % n,
+                config = config
+            )
+        } else {
+            // 3+ 人：SB = 庄后第一个有筹码的，BB = SB 后第一个有筹码的
+            val sbIndex = findNextWithChips(sorted, safeDealer, n)
+            val bbIndex = findNextWithChips(sorted, sbIndex, n)
+            BlindsState(
+                dealerIndex = safeDealer,
+                smallBlindIndex = sbIndex,
+                bigBlindIndex = bbIndex,
+                config = config
+            )
+        }
+    }
+
+    /**
+     * 庄位前移一位（跳过破产玩家），重新计算大小盲位置
+     */
+    fun rotateSkippingBroke(current: BlindsState, players: List<PlayerState>): BlindsState {
+        val sorted = players.sortedBy { it.seatOrder }
+        val n = sorted.size
+        if (n < 2) return current
+
+        // 庄家前移到下一个有筹码的玩家（庄家可以是筹码为 0 的玩家，但 SB/BB 不可以）
+        val nextDealer = (current.dealerIndex + 1) % n
+        return computeFromDealerSkippingBroke(nextDealer, players, current.config)
+    }
+
+    /**
+     * 庄位前移一位，重新计算大小盲位置（不检查筹码，保持向后兼容）
      */
     fun rotate(current: BlindsState, playerCount: Int): BlindsState {
         if (playerCount < 2) return current
@@ -50,7 +102,20 @@ class BlindsManager {
     }
 
     /**
-     * 根据庄位计算 SB / BB 位置
+     * 从 startIndex 的下一位开始，找到第一个筹码 > 0 的玩家索引。
+     * 如果所有人都为 0，回退到简单的 +1 循环。
+     */
+    private fun findNextWithChips(sorted: List<PlayerState>, startIndex: Int, n: Int): Int {
+        for (i in 1 until n) {
+            val idx = (startIndex + i) % n
+            if (sorted[idx].chips > 0) return idx
+        }
+        // 所有人筹码都为 0（极端情况），退回 startIndex+1
+        return (startIndex + 1) % n
+    }
+
+    /**
+     * 根据庄位计算 SB / BB 位置（简单版，不检查筹码）
      * - 2 人局（单挑）：庄家 = 小盲，另一人 = 大盲
      * - 3+ 人局：SB = dealer+1, BB = dealer+2
      */
@@ -75,6 +140,7 @@ class BlindsManager {
     /**
      * 计算盲注预填金额（不扣除筹码，仅返回每位玩家应预填的投入值）。
      * 如果玩家筹码不足盲注金额，则预填其全部筹码（all-in）。
+     * 筹码为 0 的玩家不预填盲注。
      */
     fun calculateBlindPrefills(
         players: List<PlayerState>,
@@ -84,6 +150,7 @@ class BlindsManager {
         val sortedPlayers = players.sortedBy { it.seatOrder }
 
         sortedPlayers.forEachIndexed { index, player ->
+            if (player.chips <= 0) return@forEachIndexed // 跳过破产玩家
             val blindAmount = when (index) {
                 blindsState.smallBlindIndex -> minOf(blindsState.config.smallBlind, player.chips)
                 blindsState.bigBlindIndex -> minOf(blindsState.config.bigBlind, player.chips)
@@ -98,13 +165,35 @@ class BlindsManager {
     }
 
     /**
+     * 从玩家筹码中立即扣除盲注，返回更新后的玩家列表。
+     */
+    fun deductBlinds(
+        players: List<PlayerState>,
+        blindPrefills: Map<String, Int>
+    ): List<PlayerState> {
+        return players.map { player ->
+            val deduction = blindPrefills[player.id] ?: 0
+            if (deduction > 0) player.copy(chips = player.chips - deduction)
+            else player
+        }
+    }
+
+    /**
+     * 结算前恢复被预扣的盲注（加回筹码），使结算引擎可以做完整扣除。
+     */
+    fun restoreBlindsForSettlement(
+        players: List<PlayerState>,
+        blindContributions: Map<String, Int>
+    ): List<PlayerState> {
+        return players.map { player ->
+            val amount = blindContributions[player.id] ?: 0
+            if (amount > 0) player.copy(chips = player.chips + amount)
+            else player
+        }
+    }
+
+    /**
      * 校验玩家投入是否符合德州扑克盲注规则
-     * 
-     * 规则：
-     * - 小盲位：投入 >= 小盲额（筹码不足则必须 all-in）
-     * - 大盲位：投入 >= 大盲额（筹码不足则必须 all-in）
-     * - 其他位：投入 >= 大盲额（跟注），或投入 = 0（弃牌），或投入为全部筹码（all-in）
-     * - 任何人的投入不能超过其筹码总额
      */
     fun validateContributions(
         players: List<PlayerState>,
