@@ -1307,9 +1307,9 @@ private fun GameScreen(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
-                // 竖向圆槽形：高 > 宽，旋转90度后的牌桌效果
-                val tableH = size.height * 0.72f
-                val tableW = minOf(size.width * 0.58f, tableH * 0.52f)
+                // 竖向圆槽形：限制最大高度，确保桌体完整显示在画布内
+                val tableH = minOf(size.height * 0.60f, size.width * 1.2f)
+                val tableW = minOf(size.width * 0.52f, tableH * 0.52f)
                 val cornerR = tableW / 2f
 
                 // 竖向胶囊形（Vertical Capsule）：高 > 宽，上下各一个半圆
@@ -1487,10 +1487,10 @@ private fun GameScreen(
                 val cx = areaW / 2f
                 val cy = areaH / 2f
                 // 玩家排列椭圆轨迹匹配竖向牌桌
-                val tableH = areaH * 0.72f
-                val tableW = minOf(areaW * 0.58f, tableH * 0.52f)
-                val radiusX = tableW / 2f * 1.55f  // 横向半径：桌子较窄，向外扩展让卡片不重叠
-                val radiusY = tableH / 2f * 1.08f  // 纵向半径：沿桌边外侧
+                val tableH = minOf(areaH * 0.60f, areaW * 1.2f)
+                val tableW = minOf(areaW * 0.52f, tableH * 0.52f)
+                val radiusX = tableW / 2f * 1.65f  // 横向半径：桌子较窄，向外扩展让卡片不重叠
+                val radiusY = tableH / 2f * 1.18f  // 纵向半径：沿桌边外侧
 
                 // 计算每位玩家的角度位置（从底部正中开始，顺时针）
                 sortedPlayers.forEachIndexed { index, player ->
