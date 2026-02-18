@@ -446,65 +446,40 @@ private fun LobbyScreen(
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sortedPlayers, key = { it.id }) { player ->
                 val isMe = player.id == state.selfId
-                val isHost = state.mode == TableMode.HOST
                 val isOffline = state.disconnectedPlayerIds.contains(player.id)
-                var showMenu by remember { mutableStateOf(false) }
 
                 val cardColor = when {
                     isOffline -> Color(0xFFEEEEEE)
                     player.isReady -> Color(0xFFE8F5E9)
                     else -> MaterialTheme.colorScheme.surface
                 }
-                Box {
-                    Card(
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardColor)
+                ) {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .then(
-                                if (isHost && !isMe) {
-                                    Modifier.combinedClickable(
-                                        onClick = {},
-                                        onLongClick = { showMenu = true }
-                                    )
-                                } else Modifier
-                            ),
-                        colors = CardDefaults.cardColors(containerColor = cardColor)
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        "${player.name}",
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                    if (isOffline) {
-                                        Text("[掉线]", fontSize = 11.sp, color = Color.Red)
-                                    }
+                        Column {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "${player.name}",
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (isOffline) {
+                                    Text("[掉线]", fontSize = 11.sp, color = Color.Red)
                                 }
-                                Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                             }
-                            Text(
-                                if (player.isReady) "✔ 已准备" else "未准备",
-                                color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                         }
-                    }
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("移除 ${player.name}", color = Color.Red) },
-                            onClick = {
-                                showMenu = false
-                                onRemovePlayer(player.id)
-                            }
+                        Text(
+                            if (player.isReady) "✔ 已准备" else "未准备",
+                            color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -567,8 +542,9 @@ private fun GameScreen(
 
     var showMenu by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
-
-    // 返回主界面确认弹窗
+    var removingPlayer by remember { mutableStateOf(false) }
+    var playerToRemoveId by remember { mutableStateOf<String?>(null) }
+    val sortedPlayers = state.players.sortedBy { it.seatOrder }
     if (showExitConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showExitConfirm = false },
@@ -586,8 +562,30 @@ private fun GameScreen(
         )
     }
 
+    // 移除玩家确认弹窗
+    val playerToRemove = sortedPlayers.firstOrNull { it.id == playerToRemoveId }
+    if (playerToRemove != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { playerToRemoveId = null },
+            title = { Text("移除玩家", fontWeight = FontWeight.Bold) },
+            text = { Text("确定要移除「${playerToRemove.name}」吗？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onRemovePlayer(playerToRemove.id)
+                        playerToRemoveId = null
+                        removingPlayer = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) { Text("确定移除") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { playerToRemoveId = null }) { Text("取消") }
+            }
+        )
+    }
+
     var myContribInput by remember { mutableStateOf("") }
-    val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
     val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
     val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
@@ -650,12 +648,43 @@ private fun GameScreen(
                             },
                             onClick = {}
                         )
+                        DropdownMenuItem(
+                            text = { Text("移除玩家") },
+                            onClick = {
+                                showMenu = false
+                                removingPlayer = true
+                            }
+                        )
                         HorizontalDivider()
                     }
                     DropdownMenuItem(
                         text = { Text("返回主界面", color = Color(0xFFE53935)) },
                         onClick = { showMenu = false; showExitConfirm = true }
                     )
+                }
+            }
+        }
+
+        // 移除模式提示横幅
+        if (removingPlayer && state.mode == TableMode.HOST) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("请点击要移除的玩家", fontSize = 13.sp, color = Color(0xFFE53935), fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = { removingPlayer = false }, modifier = Modifier.height(30.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                        Text("取消", fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -705,6 +734,8 @@ private fun GameScreen(
                             onToggleWinner = onToggleWinner,
                             getMinContribution = getMinContribution,
                             onRemovePlayer = onRemovePlayer,
+                            removingPlayer = removingPlayer,
+                            onSelectForRemoval = { id -> playerToRemoveId = id },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
@@ -781,7 +812,6 @@ private fun GameScreen(
 
 // ==================== 紧凑玩家卡片 ====================
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CompactPlayerCard(
     player: PlayerState,
@@ -790,13 +820,15 @@ private fun CompactPlayerCard(
     onToggleWinner: (String) -> Unit,
     getMinContribution: (String) -> Int,
     onRemovePlayer: (String) -> Unit,
+    removingPlayer: Boolean = false,
+    onSelectForRemoval: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
     val isMe = player.id == state.selfId
     val isHost = state.mode == TableMode.HOST
     val isOffline = state.disconnectedPlayerIds.contains(player.id)
-    var showMenu by remember { mutableStateOf(false) }
+    val isRemovable = removingPlayer && isHost && !isMe
 
     val roleTag = buildString {
         if (state.blindsEnabled && state.players.size >= 2) {
@@ -818,14 +850,11 @@ private fun CompactPlayerCard(
             modifier = Modifier
                 .fillMaxSize()
                 .then(
-                    if (isHost && !isMe) {
-                        Modifier.combinedClickable(
-                            onClick = {},
-                            onLongClick = { showMenu = true }
-                        )
-                    } else Modifier
+                    if (isRemovable) Modifier.clickable { onSelectForRemoval(player.id) }
+                    else Modifier
                 ),
-            colors = CardDefaults.cardColors(containerColor = cardColor)
+            colors = CardDefaults.cardColors(containerColor = cardColor),
+            border = if (isRemovable) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE53935)) else null
         ) {
             Column(
                 modifier = Modifier.padding(6.dp),
@@ -865,18 +894,7 @@ private fun CompactPlayerCard(
                 }
             }
         }
-        DropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = { showMenu = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text("移除 ${player.name}", color = Color.Red) },
-                onClick = {
-                    showMenu = false
-                    onRemovePlayer(player.id)
-                }
-            )
-        }
+
     }
 }
 
