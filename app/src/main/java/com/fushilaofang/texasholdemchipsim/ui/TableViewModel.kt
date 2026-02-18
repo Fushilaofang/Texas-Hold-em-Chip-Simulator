@@ -431,11 +431,9 @@ class TableViewModel(
         }
     }
 
-    /** 判断玩家是否已 all-in（总投入 ≥ 筹码） */
+    /** 判断玩家是否已 all-in（筹码耗尽）*/
     private fun isPlayerAllIn(state: TableUiState, player: PlayerState): Boolean {
-        val totalPrev = state.contributionInputs[player.id]?.toIntOrNull() ?: 0
-        val currentRound = state.roundContributions[player.id] ?: 0
-        return totalPrev + currentRound >= player.chips
+        return player.chips <= 0
     }
 
     /**
@@ -622,7 +620,12 @@ class TableViewModel(
         _uiState.update {
             val newRoundContribs = it.roundContributions + (playerId to newRoundContrib)
             val newActed = if (isRaise) setOf(playerId) else it.actedPlayerIds + playerId
+            // 实时从筹码中扣除本次投入
+            val updatedPlayers = it.players.map { p ->
+                if (p.id == playerId && amount > 0) p.copy(chips = p.chips - amount) else p
+            }
             it.copy(
+                players = updatedPlayers,
                 roundContributions = newRoundContribs,
                 actedPlayerIds = newActed,
                 info = "$playerName 投入本轮: $newRoundContrib${if (isRaise) " (加注)" else ""}"
@@ -899,11 +902,11 @@ class TableViewModel(
             val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
-            // 结算前恢复被预扣的盲注（避免结算引擎双重扣除）
-            val playersForSettlement = if (state.blindsEnabled) {
-                blindsManager.restoreBlindsForSettlement(state.players, state.blindContributions)
-            } else {
-                state.players
+            // 还原所有手牌过程中扣除的筹码（盲注 + 场上投注），
+            // 使结算引擎从「原始筹码」开始计算 chips = original - spent + won
+            val playersForSettlement = state.players.map { player ->
+                val totalContrib = effectiveContributions[player.id] ?: 0
+                player.copy(chips = player.chips + totalContrib)
             }
 
             val result = settlementEngine.settleHandSimple(
@@ -1055,10 +1058,8 @@ class TableViewModel(
 
         val player = state.players.firstOrNull { it.id == selfId } ?: return
 
-        // 计算本轮可用筹码
-        val totalPrev = state.contributionInputs[selfId]?.toIntOrNull() ?: 0
-        val currentRoundContrib = state.roundContributions[selfId] ?: 0
-        val maxAvailable = player.chips - totalPrev - currentRoundContrib
+        // 实时扣除后 player.chips 即为真实可用筹码
+        val maxAvailable = player.chips
 
         if (amount > maxAvailable) {
             _uiState.update { it.copy(info = "投入超出可用筹码 (剩余: $maxAvailable)") }
@@ -1067,9 +1068,10 @@ class TableViewModel(
 
         // 跟注校验
         val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
+        val currentRoundContrib = state.roundContributions[selfId] ?: 0
         val callAmount = currentMaxBet - currentRoundContrib
         val newRoundContrib = currentRoundContrib + amount
-        if (newRoundContrib < currentMaxBet && newRoundContrib < player.chips - totalPrev) {
+        if (newRoundContrib < currentMaxBet && amount < player.chips) {
             _uiState.update { it.copy(info = "至少需要跟注 $callAmount") }
             return
         }
@@ -1078,9 +1080,12 @@ class TableViewModel(
             processContribution(selfId, amount)
         } else if (state.mode == TableMode.CLIENT) {
             client.sendContribution(selfId, amount)
-            // 乐观更新
+            // 乐观更新：同步扣除筹码，等服务端同步后覆盖
             _uiState.update {
                 it.copy(
+                    players = it.players.map { p ->
+                        if (p.id == selfId && amount > 0) p.copy(chips = p.chips - amount) else p
+                    },
                     roundContributions = it.roundContributions + (selfId to newRoundContrib),
                     info = "已投入本轮: $newRoundContrib"
                 )
