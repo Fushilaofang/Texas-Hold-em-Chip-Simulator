@@ -148,6 +148,8 @@ class TableViewModel(
 
     fun goHome() {
         // 保存会话信息以便后续重连
+        val prevMode = _uiState.value.mode
+        val prevTableName = _uiState.value.tableName
         saveSession()
         releaseWakeLock()
         // 断开连接，回到首页（使用 stop/disconnect 而非 close，保留 scope 以便重连）
@@ -155,6 +157,7 @@ class TableViewModel(
         roomScanner.stopScan()
         server.stop()
         client.disconnect()
+        val canRejoin = prevMode != TableMode.IDLE
         _uiState.update {
             it.copy(
                 mode = TableMode.IDLE,
@@ -166,6 +169,9 @@ class TableViewModel(
                 discoveredRooms = emptyList(),
                 disconnectedPlayerIds = emptySet(),
                 waitingForHostReconnect = false,
+                canRejoin = canRejoin,
+                lastSessionTableName = if (canRejoin) prevTableName else "",
+                lastSessionMode = if (canRejoin) prevMode else TableMode.IDLE,
                 info = "准备开始"
             )
         }
