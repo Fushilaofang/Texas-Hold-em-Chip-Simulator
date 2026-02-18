@@ -89,11 +89,4 @@ sealed class NetworkMessage {
     data class Kicked(
         val reason: String
     ) : NetworkMessage()
-
-    /** 加入请求等待审批中（服务端 → 客户端） */
-    @Serializable
-    @SerialName("join_pending")
-    data class JoinPending(
-        val message: String
-    ) : NetworkMessage()
 }

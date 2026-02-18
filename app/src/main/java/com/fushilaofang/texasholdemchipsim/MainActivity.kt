@@ -140,29 +140,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
-
-                // 房主审批被踢玩家重新加入弹窗
-                val firstPending = state.pendingJoinApprovals.firstOrNull()
-                if (firstPending != null) {
-                    androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { /* 不允许点击外部关闭 */ },
-                        title = { Text("加入请求", fontWeight = FontWeight.Bold) },
-                        text = {
-                            Text("之前被移除的玩家「${firstPending.playerName}」请求重新加入房间（筹码: ${firstPending.buyIn}），是否同意？")
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = { vm.approveJoinRequest(firstPending.requestId) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))
-                            ) { Text("同意加入") }
-                        },
-                        dismissButton = {
-                            OutlinedButton(
-                                onClick = { vm.rejectJoinRequest(firstPending.requestId) }
-                            ) { Text("拒绝", color = Color(0xFFE53935)) }
-                        }
-                    )
-                }
             }
         }
     }
@@ -180,9 +157,6 @@ private fun HomeScreen(
     onRejoin: () -> Unit,
     onDismissKicked: () -> Unit = {}
 ) {
-    var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
-    var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
-
     // 被踢出弹窗
     if (state.kickedFromGame) {
         androidx.compose.material3.AlertDialog(
@@ -194,6 +168,9 @@ private fun HomeScreen(
             }
         )
     }
+
+    var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
+    var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
 
     Column(
         modifier = Modifier

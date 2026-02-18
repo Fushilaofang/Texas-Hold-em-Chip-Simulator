@@ -71,8 +71,6 @@ data class TableUiState(
     val waitingForHostReconnect: Boolean = false,
     // --- 被踢出 ---
     val kickedFromGame: Boolean = false,
-    // --- 房主审批加入请求 ---
-    val pendingJoinApprovals: List<PendingJoinApproval> = emptyList(),
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -86,12 +84,6 @@ data class TableUiState(
     val savedBuyIn: Int = 1000,
     val savedSmallBlind: Int = 10,
     val savedBigBlind: Int = 20
-)
-
-data class PendingJoinApproval(
-    val requestId: String,
-    val playerName: String,
-    val buyIn: Int
 )
 
 class TableViewModel(
@@ -313,7 +305,7 @@ class TableViewModel(
         if (playerId == state.selfId) return // 不能移除自己
 
         val pName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
-        server.kickPlayer(playerId, pName)
+        server.kickPlayer(playerId)
         _uiState.update { s ->
             s.copy(
                 players = s.players.filter { it.id != playerId },
@@ -322,22 +314,6 @@ class TableViewModel(
             )
         }
         syncToClients()
-    }
-
-    /** 房主批准被踢玩家重新加入 */
-    fun approveJoinRequest(requestId: String) {
-        server.approveJoin(requestId)
-        _uiState.update { state ->
-            state.copy(pendingJoinApprovals = state.pendingJoinApprovals.filter { it.requestId != requestId })
-        }
-    }
-
-    /** 房主拒绝被踢玩家重新加入 */
-    fun rejectJoinRequest(requestId: String) {
-        server.rejectJoin(requestId)
-        _uiState.update { state ->
-            state.copy(pendingJoinApprovals = state.pendingJoinApprovals.filter { it.requestId != requestId })
-        }
     }
 
     /** 客户端关闭被踢弹窗 */
@@ -732,18 +708,6 @@ class TableViewModel(
                 }
                 syncToClients()
             }
-            is LanTableServer.Event.JoinApprovalRequested -> {
-                _uiState.update { state ->
-                    state.copy(
-                        pendingJoinApprovals = state.pendingJoinApprovals + PendingJoinApproval(
-                            requestId = event.requestId,
-                            playerName = event.playerName,
-                            buyIn = event.buyIn
-                        ),
-                        info = "${event.playerName} 请求重新加入，等待审批"
-                    )
-                }
-            }
             else -> Unit
         }
     }
@@ -756,11 +720,7 @@ class TableViewModel(
             }
             is LanTableClient.Event.StateSync -> {
                 _uiState.update {
-                    val newScreen = when {
-                        event.gameStarted -> ScreenState.GAME
-                        it.screen == ScreenState.GAME || it.screen == ScreenState.LOBBY -> ScreenState.LOBBY
-                        else -> it.screen
-                    }
+                    val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
                     it.copy(
                         screen = newScreen,
                         players = event.players,
@@ -778,11 +738,9 @@ class TableViewModel(
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Kicked -> {
-                val prevMode = _uiState.value.mode
-                val prevTableName = _uiState.value.tableName
-                saveSession()
                 client.disconnect()
                 releaseWakeLock()
+                clearSession()
                 _uiState.update {
                     it.copy(
                         mode = TableMode.IDLE,
@@ -791,9 +749,7 @@ class TableViewModel(
                         gameStarted = false,
                         kickedFromGame = true,
                         waitingForHostReconnect = false,
-                        canRejoin = prevMode != TableMode.IDLE,
-                        lastSessionTableName = prevTableName,
-                        lastSessionMode = prevMode,
+                        canRejoin = false,
                         selfId = "",
                         disconnectedPlayerIds = emptySet(),
                         info = event.reason
