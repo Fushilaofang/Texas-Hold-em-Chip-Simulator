@@ -685,6 +685,7 @@ class TableViewModel(
     fun setInitialDealer(playerIndex: Int) {
         if (_uiState.value.mode != TableMode.HOST) return
         _uiState.update { it.copy(initialDealerIndex = playerIndex) }
+        syncToClients()
     }
 
     /**
@@ -1138,7 +1139,8 @@ class TableViewModel(
                     currentRound = state.currentRound.name,
                     currentTurnPlayerId = state.currentTurnPlayerId,
                     roundContributions = state.roundContributions,
-                    actedPlayerIds = state.actedPlayerIds
+                    actedPlayerIds = state.actedPlayerIds,
+                    initialDealerIndex = state.initialDealerIndex
                 )
             }
         }
@@ -1290,6 +1292,7 @@ class TableViewModel(
                         currentTurnPlayerId = event.currentTurnPlayerId,
                         roundContributions = event.roundContributions,
                         actedPlayerIds = event.actedPlayerIds,
+                        initialDealerIndex = event.initialDealerIndex,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
                 }

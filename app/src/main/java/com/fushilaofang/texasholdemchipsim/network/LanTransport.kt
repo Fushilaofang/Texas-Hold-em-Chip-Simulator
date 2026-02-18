@@ -175,7 +175,8 @@ class LanTableServer(
         currentRound: String = "PRE_FLOP",
         currentTurnPlayerId: String = "",
         roundContributions: Map<String, Int> = emptyMap(),
-        actedPlayerIds: Set<String> = emptySet()
+        actedPlayerIds: Set<String> = emptySet(),
+        initialDealerIndex: Int = 0
     ) {
         val message = NetworkMessage.StateSync(
             players = players,
@@ -191,7 +192,8 @@ class LanTableServer(
             currentRound = currentRound,
             currentTurnPlayerId = currentTurnPlayerId,
             roundContributions = roundContributions,
-            actedPlayerIds = actedPlayerIds
+            actedPlayerIds = actedPlayerIds,
+            initialDealerIndex = initialDealerIndex
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -479,7 +481,8 @@ class LanTableClient(
             val currentRound: String = "PRE_FLOP",
             val currentTurnPlayerId: String = "",
             val roundContributions: Map<String, Int> = emptyMap(),
-            val actedPlayerIds: Set<String> = emptySet()
+            val actedPlayerIds: Set<String> = emptySet(),
+            val initialDealerIndex: Int = 0
         ) : Event()
 
         data class Disconnected(val willReconnect: Boolean) : Event()
@@ -587,7 +590,8 @@ class LanTableClient(
                                     currentRound = msg.currentRound,
                                     currentTurnPlayerId = msg.currentTurnPlayerId,
                                     roundContributions = msg.roundContributions,
-                                    actedPlayerIds = msg.actedPlayerIds
+                                    actedPlayerIds = msg.actedPlayerIds,
+                                    initialDealerIndex = msg.initialDealerIndex
                                 )
                             )
                         }
