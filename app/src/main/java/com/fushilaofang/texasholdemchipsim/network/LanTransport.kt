@@ -190,15 +190,18 @@ class LanTableServer(
         synchronized(clientsLock) {
             val conn = clients.remove(playerId)
             conn?.let {
-                // 先告知客户端被踢，再关闭连接
+                // 先告知客户端被踢，再优雅地半关闭写端（FIN），确保客户端能读到 Kicked 消息
                 try {
                     val kickedText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Kicked)
                     it.writer.write(kickedText)
                     it.writer.newLine()
                     it.writer.flush()
-                } catch (_: Exception) {}
+                    // shutdownOutput 发送 FIN，客户端可继续读完缓冲区后收到 EOF
+                    runCatching { it.socket.shutdownOutput() }
+                } catch (_: Exception) {
+                    runCatching { it.socket.close() }
+                }
                 it.readerJob.cancel()
-                runCatching { it.socket.close() }
             }
         }
         synchronized(disconnectedLock) {
