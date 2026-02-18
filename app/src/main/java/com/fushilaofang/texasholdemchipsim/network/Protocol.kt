@@ -82,11 +82,4 @@ sealed class NetworkMessage {
     data class ReconnectAccepted(
         val playerId: String
     ) : NetworkMessage()
-
-    /** 房主踢出玩家（服务端 → 客户端） */
-    @Serializable
-    @SerialName("kicked")
-    data class Kicked(
-        val reason: String
-    ) : NetworkMessage()
 }

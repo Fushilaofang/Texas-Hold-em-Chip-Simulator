@@ -185,29 +185,6 @@ class LanTableServer(
         }
     }
 
-    /** 房主主动踢出某个玩家，先发送 Kicked 消息再关闭连接 */
-    fun kickPlayer(playerId: String) {
-        val conn = synchronized(clientsLock) { clients.remove(playerId) }
-        conn?.let {
-            try {
-                val kickedMsg = NetworkMessage.Kicked(reason = "你已被房主移出本局游戏")
-                val text = json.encodeToString(NetworkMessage.serializer(), kickedMsg)
-                it.writer.write(text)
-                it.writer.newLine()
-                it.writer.flush()
-            } catch (_: Exception) {}
-            // 延迟关闭，确保客户端有时间读取 Kicked 消息
-            scope.launch {
-                delay(300)
-                it.readerJob.cancel()
-                runCatching { it.socket.close() }
-            }
-        }
-        synchronized(disconnectedLock) {
-            disconnectedPlayers.remove(playerId)
-        }
-    }
-
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
@@ -421,8 +398,6 @@ class LanTableClient(
     private var assignedPlayerId: String? = null
     private var reconnecting = false
     private var shouldReconnect = true
-    @Volatile
-    private var kicked = false
 
     sealed class Event {
         data class JoinAccepted(val playerId: String) : Event()
@@ -439,7 +414,6 @@ class LanTableClient(
         data class Disconnected(val willReconnect: Boolean) : Event()
         data class Reconnected(val playerId: String) : Event()
         data class ReconnectFailed(val reason: String) : Event()
-        data class Kicked(val reason: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -454,7 +428,6 @@ class LanTableClient(
         assignedPlayerId = null
         reconnecting = false
         shouldReconnect = true
-        kicked = false
 
         doConnect(hostIp, playerName, buyIn, isReconnect = false, onEvent = onEvent)
     }
@@ -556,13 +529,6 @@ class LanTableClient(
 
                         is NetworkMessage.Pong -> { /* 忽略，保活即可 */ }
 
-                        is NetworkMessage.Kicked -> {
-                            kicked = true
-                            shouldReconnect = false
-                            onEvent(Event.Kicked(msg.reason))
-                            return@launch  // 立即退出，不走断线重连逻辑
-                        }
-
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
                         else -> Unit
                     }
@@ -576,9 +542,6 @@ class LanTableClient(
                 runCatching { socket?.close() }
                 socket = null
             }
-
-            // 被踢出时不走断线重连逻辑
-            if (kicked) return@launch
 
             // 断线后尝试重连
             if (shouldReconnect && assignedPlayerId != null && !reconnecting) {
@@ -638,7 +601,6 @@ class LanTableClient(
         assignedPlayerId = playerId
         reconnecting = false
         shouldReconnect = true
-        kicked = false
         doConnect(hostIp, playerName, buyIn, isReconnect = true, onEvent = onEvent)
     }
 
@@ -669,7 +631,6 @@ class LanTableClient(
     fun disconnect() {
         shouldReconnect = false
         reconnecting = false
-        kicked = false
         heartbeatJob?.cancel()
         heartbeatJob = null
         listenJob?.cancel()

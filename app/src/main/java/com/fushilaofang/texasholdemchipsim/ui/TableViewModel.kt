@@ -69,8 +69,6 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
-    // --- 被踢出 ---
-    val kickedFromGame: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -296,29 +294,6 @@ class TableViewModel(
         if (_uiState.value.mode == TableMode.HOST) {
             syncToClients()
         }
-    }
-
-    /** 房主移除指定玩家 */
-    fun removePlayer(playerId: String) {
-        val state = _uiState.value
-        if (state.mode != TableMode.HOST) return
-        if (playerId == state.selfId) return // 不能移除自己
-
-        val pName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
-        server.kickPlayer(playerId)
-        _uiState.update { s ->
-            s.copy(
-                players = s.players.filter { it.id != playerId },
-                disconnectedPlayerIds = s.disconnectedPlayerIds - playerId,
-                info = "已移除 $pName"
-            )
-        }
-        syncToClients()
-    }
-
-    /** 客户端关闭被踢弹窗 */
-    fun dismissKicked() {
-        _uiState.update { it.copy(kickedFromGame = false) }
     }
 
     // ==================== 准备 / 开始游戏 ====================
@@ -737,26 +712,6 @@ class TableViewModel(
             }
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
-            is LanTableClient.Event.Kicked -> {
-                // 不在这里调用 client.disconnect()，因为当前在 listenJob 协程内部执行
-                // 连接会在 doConnect 的 finally 块中自动清理
-                releaseWakeLock()
-                clearSession()
-                _uiState.update {
-                    it.copy(
-                        mode = TableMode.IDLE,
-                        screen = ScreenState.HOME,
-                        players = emptyList(),
-                        gameStarted = false,
-                        kickedFromGame = true,
-                        waitingForHostReconnect = false,
-                        canRejoin = false,
-                        selfId = "",
-                        disconnectedPlayerIds = emptySet(),
-                        info = event.reason
-                    )
-                }
-            }
             is LanTableClient.Event.Disconnected -> {
                 if (event.willReconnect) {
                     _uiState.update { it.copy(waitingForHostReconnect = true, info = "连接断开，正在尝试重连...") }

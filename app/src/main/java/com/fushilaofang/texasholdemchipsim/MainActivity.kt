@@ -79,8 +79,7 @@ class MainActivity : ComponentActivity() {
                         onNavigateJoin = { vm.navigateTo(ScreenState.JOIN_ROOM) },
                         onPlayerNameChange = vm::savePlayerName,
                         onBuyInChange = vm::saveBuyIn,
-                        onRejoin = vm::rejoinSession,
-                        onDismissKicked = vm::dismissKicked
+                        onRejoin = vm::rejoinSession
                     )
                     ScreenState.CREATE_ROOM -> CreateRoomScreen(
                         state = state,
@@ -102,8 +101,7 @@ class MainActivity : ComponentActivity() {
                         onToggleReady = vm::toggleReady,
                         onStartGame = vm::startGame,
                         onLeave = vm::goHome,
-                        onToggleBlinds = vm::toggleBlinds,
-                        onRemovePlayer = vm::removePlayer
+                        onToggleBlinds = vm::toggleBlinds
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -113,7 +111,6 @@ class MainActivity : ComponentActivity() {
                         onReset = vm::resetTable,
                         onToggleBlinds = vm::toggleBlinds,
                         getMinContribution = vm::getMinContribution,
-                        onRemovePlayer = vm::removePlayer,
                         onLeave = vm::goHome
                     )
                 }
@@ -154,21 +151,8 @@ private fun HomeScreen(
     onNavigateJoin: () -> Unit,
     onPlayerNameChange: (String) -> Unit,
     onBuyInChange: (Int) -> Unit,
-    onRejoin: () -> Unit,
-    onDismissKicked: () -> Unit = {}
+    onRejoin: () -> Unit
 ) {
-    // 被踢出弹窗
-    if (state.kickedFromGame) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { onDismissKicked() },
-            title = { Text("已被移出", fontWeight = FontWeight.Bold) },
-            text = { Text("你已被房主移出本局游戏") },
-            confirmButton = {
-                Button(onClick = { onDismissKicked() }) { Text("确定") }
-            }
-        )
-    }
-
     var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
 
@@ -411,8 +395,7 @@ private fun LobbyScreen(
     onToggleReady: () -> Unit,
     onStartGame: () -> Unit,
     onLeave: () -> Unit,
-    onToggleBlinds: (Boolean) -> Unit,
-    onRemovePlayer: (String) -> Unit
+    onToggleBlinds: (Boolean) -> Unit
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
@@ -545,7 +528,6 @@ private fun GameScreen(
     onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
     getMinContribution: (String) -> Int,
-    onRemovePlayer: (String) -> Unit,
     onLeave: () -> Unit
 ) {
     var showLogs by remember { mutableStateOf(false) }
@@ -556,8 +538,6 @@ private fun GameScreen(
 
     var showMenu by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
-    var removingPlayer by remember { mutableStateOf(false) }
-    var playerToRemoveId by remember { mutableStateOf<String?>(null) }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     if (showExitConfirm) {
         androidx.compose.material3.AlertDialog(
@@ -572,29 +552,6 @@ private fun GameScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showExitConfirm = false }) { Text("取消") }
-            }
-        )
-    }
-
-    // 移除玩家确认弹窗
-    val playerToRemove = sortedPlayers.firstOrNull { it.id == playerToRemoveId }
-    if (playerToRemove != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { playerToRemoveId = null },
-            title = { Text("移除玩家", fontWeight = FontWeight.Bold) },
-            text = { Text("确定要移除「${playerToRemove.name}」吗？") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onRemovePlayer(playerToRemove.id)
-                        playerToRemoveId = null
-                        removingPlayer = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
-                ) { Text("确定移除") }
-            },
-            dismissButton = {
-                OutlinedButton(onClick = { playerToRemoveId = null }) { Text("取消") }
             }
         )
     }
@@ -662,43 +619,12 @@ private fun GameScreen(
                             },
                             onClick = {}
                         )
-                        DropdownMenuItem(
-                            text = { Text("移除玩家") },
-                            onClick = {
-                                showMenu = false
-                                removingPlayer = true
-                            }
-                        )
                         HorizontalDivider()
                     }
                     DropdownMenuItem(
                         text = { Text("返回主界面", color = Color(0xFFE53935)) },
                         onClick = { showMenu = false; showExitConfirm = true }
                     )
-                }
-            }
-        }
-
-        // 移除模式提示横幅
-        if (removingPlayer && state.mode == TableMode.HOST) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("请点击要移除的玩家", fontSize = 13.sp, color = Color(0xFFE53935), fontWeight = FontWeight.Bold)
-                    OutlinedButton(onClick = { removingPlayer = false }, modifier = Modifier.height(30.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                        Text("取消", fontSize = 12.sp)
-                    }
                 }
             }
         }
@@ -747,9 +673,6 @@ private fun GameScreen(
                             sortedPlayers = sortedPlayers,
                             onToggleWinner = onToggleWinner,
                             getMinContribution = getMinContribution,
-                            onRemovePlayer = onRemovePlayer,
-                            removingPlayer = removingPlayer,
-                            onSelectForRemoval = { id -> playerToRemoveId = id },
                             modifier = Modifier
                                 .weight(1f)
                                 .fillMaxHeight()
@@ -833,16 +756,12 @@ private fun CompactPlayerCard(
     sortedPlayers: List<PlayerState>,
     onToggleWinner: (String) -> Unit,
     getMinContribution: (String) -> Int,
-    onRemovePlayer: (String) -> Unit,
-    removingPlayer: Boolean = false,
-    onSelectForRemoval: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
     val isMe = player.id == state.selfId
     val isHost = state.mode == TableMode.HOST
     val isOffline = state.disconnectedPlayerIds.contains(player.id)
-    val isRemovable = removingPlayer && isHost && !isMe
 
     val roleTag = buildString {
         if (state.blindsEnabled && state.players.size >= 2) {
@@ -861,14 +780,8 @@ private fun CompactPlayerCard(
 
     Box(modifier = modifier) {
         Card(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (isRemovable) Modifier.clickable { onSelectForRemoval(player.id) }
-                    else Modifier
-                ),
-            colors = CardDefaults.cardColors(containerColor = cardColor),
-            border = if (isRemovable) androidx.compose.foundation.BorderStroke(2.dp, Color(0xFFE53935)) else null
+            modifier = Modifier.fillMaxSize(),
+            colors = CardDefaults.cardColors(containerColor = cardColor)
         ) {
             Column(
                 modifier = Modifier.padding(6.dp),
