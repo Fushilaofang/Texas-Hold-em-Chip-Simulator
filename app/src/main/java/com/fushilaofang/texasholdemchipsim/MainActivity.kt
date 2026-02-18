@@ -1522,7 +1522,10 @@ private fun GameScreen(
                 }
 
                 // 左侧路径上距离 d（从顶部中心出发，顺时针）处的坐标
+                // 注意：为保证关于竖轴严格镜像对称，
+                // 左侧席位 k 对应 leftSidePos(sideLen - k*step)，使其与右侧席位 k 关于 cx 对称
                 fun leftSidePos(d: Float): Pair<Float, Float> {
+                    // d 仍从顶部顺时针度量，但调用时传入 (sideLen - k*step) 使镜像正确
                     return when {
                         d <= quarterArc -> {
                             // 顶部左 1/4 圆：角度从 -90°（顶） → -180°（左）
@@ -1546,15 +1549,20 @@ private fun GameScreen(
 
                 // ── 10 个固定席位 ─────────────────────────────────────────────
                 // 席位 0  : 正下方
-                // 席位 1-4: 右侧路径五等分的 4 个中间点（从底→顶）
+                // 席位 1-4: 右侧路径五等分的 4 个中间点（从底→顶，k=1..4）
                 // 席位 5  : 正上方
-                // 席位 6-9: 左侧路径五等分的 4 个中间点（从顶→底）
+                // 席位 6-9: 左侧路径五等分的 4 个中间点，与右侧严格镜像对称
+                //           左侧席位 k（k=1..4）对应右侧席位 k 的水平镜像：
+                //           rightSidePos(k*step) 的 x 关于 cx 翻转即可，无需 leftSidePos
                 val step = sideLen / 5f
                 val allSeats: List<Pair<Float, Float>> = buildList {
                     add(Pair(cx, bcy + R))                          // 0 正下
-                    for (k in 1..4) add(rightSidePos(k * step))     // 1-4 右侧
+                    for (k in 1..4) add(rightSidePos(k * step))     // 1-4 右侧（从底→顶）
                     add(Pair(cx, tcy - R))                          // 5 正上
-                    for (k in 1..4) add(leftSidePos(k * step))      // 6-9 左侧
+                    for (k in 1..4) {                               // 6-9 左侧（右侧镜像，从顶→底，即 k=4..1）
+                        val (rx, ry) = rightSidePos((5 - k) * step)
+                        add(Pair(2f * cx - rx, ry))
+                    }
                 }
 
                 // ── 按人数对称选座映射表 ──────────────────────────────────────
