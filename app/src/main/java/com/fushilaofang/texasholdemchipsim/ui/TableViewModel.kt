@@ -797,6 +797,12 @@ class TableViewModel(
 
         // 翻牌前：盲注计入 roundContributions，首位行动 = UTG
         val roundContribs = if (state.blindsEnabled) blindPrefills else emptyMap()
+        // 盲注全压玩家（扣除盲注后 chips=0）预先加入 actedPlayerIds，
+        // 防止 isRoundComplete 因「未行动」导致回合坷死
+        val blindAllInActed = if (state.blindsEnabled) {
+            playersAfterBlinds.filter { it.chips <= 0 && (blindPrefills[it.id] ?: 0) > 0 }
+                .map { it.id }.toSet()
+        } else emptySet()
         val tmpState = state.copy(
             players = playersAfterBlinds,
             blindsState = blinds,
@@ -832,7 +838,7 @@ class TableViewModel(
                 currentRound = BettingRound.PRE_FLOP,
                 currentTurnPlayerId = firstTurn,
                 roundContributions = roundContribs,
-                actedPlayerIds = emptySet(),
+                actedPlayerIds = blindAllInActed,
                 foldedPlayerIds = emptySet(),
                 selectedWinnerIds = emptySet(),
                 logs = (state.logs + blindLogs).takeLast(500),
@@ -844,7 +850,6 @@ class TableViewModel(
     }
 
     /**
-     * 结算本手并自动开始下一手：结算→轮转庄位→扣除盲注→设置翻牌前
      * 仅在摊牌阶段可操作。
      */
     fun settleAndAdvance() {
@@ -902,11 +907,12 @@ class TableViewModel(
             val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
-            // 还原所有手牌过程中扣除的筹码（盲注 + 场上投注），
-            // 使结算引擎从「原始筹码」开始计算 chips = original - spent + won
+            // 还原所有手牌过程中实际扣除的筹码（必须用 contributions 而非 effectiveContributions）
+            // effectiveContributions 在 sidePotEnabled=false 时会把所有人调为最大值，
+            // 但实际扣除的筹码是 contributions，两者必须分离。
             val playersForSettlement = state.players.map { player ->
-                val totalContrib = effectiveContributions[player.id] ?: 0
-                player.copy(chips = player.chips + totalContrib)
+                val actualContrib = contributions[player.id] ?: 0
+                player.copy(chips = player.chips + actualContrib)
             }
 
             val result = settlementEngine.settleHandSimple(
@@ -959,6 +965,9 @@ class TableViewModel(
             val firstTurn = getPreFlopFirstPlayerId(tmpState, newBlinds)
             val firstName = playersAfterBlinds.sortedBy { it.seatOrder }
                 .firstOrNull { it.id == firstTurn }?.name ?: "?"
+            val blindAllInActed = playersAfterBlinds
+                .filter { it.chips <= 0 && (blindPrefills[it.id] ?: 0) > 0 }
+                .map { it.id }.toSet()
 
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
@@ -979,7 +988,7 @@ class TableViewModel(
                     currentRound = BettingRound.PRE_FLOP,
                     currentTurnPlayerId = firstTurn,
                     roundContributions = blindPrefills,
-                    actedPlayerIds = emptySet(),
+                    actedPlayerIds = blindAllInActed,
                     info = infoText
                 )
             }
