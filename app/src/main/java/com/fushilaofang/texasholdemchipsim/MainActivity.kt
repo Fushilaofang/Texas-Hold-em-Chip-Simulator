@@ -1343,7 +1343,26 @@ private fun GameScreen(
         var showFoldConfirm by remember { mutableStateOf(false) }
         var showSettleConfirm by remember { mutableStateOf(false) }
         var showChipDialog by remember { mutableStateOf(false) }
+        var showCallConfirm by remember { mutableStateOf(false) }
+        var pendingCallAmount by remember { mutableIntStateOf(0) }
 
+        // 跟注确认弹窗
+        if (showCallConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showCallConfirm = false },
+                title = { Text("确认跟注", fontWeight = FontWeight.Bold) },
+                text = { Text("跟注需要投入 $pendingCallAmount 筹码") },
+                confirmButton = {
+                    Button(
+                        onClick = { showCallConfirm = false; onSubmitContribution(pendingCallAmount) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
+                    ) { Text("确认跟注") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showCallConfirm = false }) { Text("取消") }
+                }
+            )
+        }
         // 弃牌确认弹窗
         if (showFoldConfirm) {
             androidx.compose.material3.AlertDialog(
@@ -1451,14 +1470,14 @@ private fun GameScreen(
                             } else {
                                 // 需要跟注
                                 Button(
-                                    onClick = { if (canAct) onSubmitContribution(callNeeded) },
+                                    onClick = { if (canAct) { pendingCallAmount = callNeeded; showCallConfirm = true } },
                                     enabled = canAct,
                                     modifier = Modifier.weight(1f).height(48.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFF43A047),
                                         disabledContainerColor = Color(0xFFBDBDBD)
                                     )
-                                ) { Text("跟注 $callNeeded", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                                ) { Text("跟注", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                             }
 
                             Button(
