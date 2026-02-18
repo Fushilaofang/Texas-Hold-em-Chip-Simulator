@@ -774,9 +774,11 @@ class TableViewModel(
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Kicked -> {
+                val prevMode = _uiState.value.mode
+                val prevTableName = _uiState.value.tableName
+                saveSession()
                 client.disconnect()
                 releaseWakeLock()
-                clearSession()
                 _uiState.update {
                     it.copy(
                         mode = TableMode.IDLE,
@@ -785,7 +787,9 @@ class TableViewModel(
                         gameStarted = false,
                         kickedFromGame = true,
                         waitingForHostReconnect = false,
-                        canRejoin = false,
+                        canRejoin = prevMode != TableMode.IDLE,
+                        lastSessionTableName = prevTableName,
+                        lastSessionMode = prevMode,
                         selfId = "",
                         disconnectedPlayerIds = emptySet(),
                         info = event.reason
