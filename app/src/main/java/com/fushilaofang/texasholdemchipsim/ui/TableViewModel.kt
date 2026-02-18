@@ -69,6 +69,10 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
+    // --- 被踢出 ---
+    val kickedFromGame: Boolean = false,
+    // --- 房主审批加入请求 ---
+    val pendingJoinApprovals: List<PendingJoinApproval> = emptyList(),
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -76,14 +80,18 @@ data class TableUiState(
     // --- 房间发现 ---
     val isScanning: Boolean = false,
     val discoveredRooms: List<DiscoveredRoom> = emptyList(),
-    // --- 被踢出提示 ---
-    val kickedMessage: String? = null,
     // --- 用户设置（持久化） ---
     val savedPlayerName: String = "",
     val savedRoomName: String = "家庭牌局",
     val savedBuyIn: Int = 1000,
     val savedSmallBlind: Int = 10,
     val savedBigBlind: Int = 20
+)
+
+data class PendingJoinApproval(
+    val requestId: String,
+    val playerName: String,
+    val buyIn: Int
 )
 
 class TableViewModel(
@@ -148,9 +156,6 @@ class TableViewModel(
         _uiState.update { it.copy(screen = screen) }
     }
 
-    fun dismissKicked() {
-        _uiState.update { it.copy(kickedMessage = null) }
-    }
     fun goHome() {
         // 保存会话信息以便后续重连
         val prevMode = _uiState.value.mode
@@ -308,7 +313,7 @@ class TableViewModel(
         if (playerId == state.selfId) return // 不能移除自己
 
         val pName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
-        server.kickPlayer(playerId)
+        server.kickPlayer(playerId, pName)
         _uiState.update { s ->
             s.copy(
                 players = s.players.filter { it.id != playerId },
@@ -317,6 +322,27 @@ class TableViewModel(
             )
         }
         syncToClients()
+    }
+
+    /** 房主批准被踢玩家重新加入 */
+    fun approveJoinRequest(requestId: String) {
+        server.approveJoin(requestId)
+        _uiState.update { state ->
+            state.copy(pendingJoinApprovals = state.pendingJoinApprovals.filter { it.requestId != requestId })
+        }
+    }
+
+    /** 房主拒绝被踢玩家重新加入 */
+    fun rejectJoinRequest(requestId: String) {
+        server.rejectJoin(requestId)
+        _uiState.update { state ->
+            state.copy(pendingJoinApprovals = state.pendingJoinApprovals.filter { it.requestId != requestId })
+        }
+    }
+
+    /** 客户端关闭被踢弹窗 */
+    fun dismissKicked() {
+        _uiState.update { it.copy(kickedFromGame = false) }
     }
 
     // ==================== 准备 / 开始游戏 ====================
@@ -706,6 +732,18 @@ class TableViewModel(
                 }
                 syncToClients()
             }
+            is LanTableServer.Event.JoinApprovalRequested -> {
+                _uiState.update { state ->
+                    state.copy(
+                        pendingJoinApprovals = state.pendingJoinApprovals + PendingJoinApproval(
+                            requestId = event.requestId,
+                            playerName = event.playerName,
+                            buyIn = event.buyIn
+                        ),
+                        info = "${event.playerName} 请求重新加入，等待审批"
+                    )
+                }
+            }
             else -> Unit
         }
     }
@@ -735,6 +773,25 @@ class TableViewModel(
             }
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
+            is LanTableClient.Event.Kicked -> {
+                client.disconnect()
+                releaseWakeLock()
+                clearSession()
+                _uiState.update {
+                    it.copy(
+                        mode = TableMode.IDLE,
+                        screen = ScreenState.HOME,
+                        players = emptyList(),
+                        gameStarted = false,
+                        kickedFromGame = true,
+                        waitingForHostReconnect = false,
+                        canRejoin = false,
+                        selfId = "",
+                        disconnectedPlayerIds = emptySet(),
+                        info = event.reason
+                    )
+                }
+            }
             is LanTableClient.Event.Disconnected -> {
                 if (event.willReconnect) {
                     _uiState.update { it.copy(waitingForHostReconnect = true, info = "连接断开，正在尝试重连...") }
@@ -747,29 +804,6 @@ class TableViewModel(
             }
             is LanTableClient.Event.ReconnectFailed -> {
                 _uiState.update { it.copy(waitingForHostReconnect = false, info = event.reason) }
-            }
-            is LanTableClient.Event.Kicked -> {
-                // 被房主踢出：清除会话，回到主界面并显示提示
-                releaseWakeLock()
-                roomScanner.stopScan()
-                client.disconnect()
-                clearSession()
-                _uiState.update {
-                    it.copy(
-                        mode = TableMode.IDLE,
-                        screen = ScreenState.HOME,
-                        players = emptyList(),
-                        gameStarted = false,
-                        selfId = "",
-                        isScanning = false,
-                        discoveredRooms = emptyList(),
-                        disconnectedPlayerIds = emptySet(),
-                        waitingForHostReconnect = false,
-                        canRejoin = false,
-                        kickedMessage = "你已被房主移出本局游戏",
-                        info = "准备开始"
-                    )
-                }
             }
         }
     }

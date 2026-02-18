@@ -79,7 +79,8 @@ class MainActivity : ComponentActivity() {
                         onNavigateJoin = { vm.navigateTo(ScreenState.JOIN_ROOM) },
                         onPlayerNameChange = vm::savePlayerName,
                         onBuyInChange = vm::saveBuyIn,
-                        onRejoin = vm::rejoinSession
+                        onRejoin = vm::rejoinSession,
+                        onDismissKicked = vm::dismissKicked
                     )
                     ScreenState.CREATE_ROOM -> CreateRoomScreen(
                         state = state,
@@ -140,17 +141,25 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // 被房主移出弹窗
-                val kickedMsg = state.kickedMessage
-                if (kickedMsg != null) {
+                // 房主审批被踢玩家重新加入弹窗
+                val firstPending = state.pendingJoinApprovals.firstOrNull()
+                if (firstPending != null) {
                     androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { vm.dismissKicked() },
-                        title = { Text("已被移出", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
-                        text = { Text(kickedMsg, fontSize = 15.sp) },
+                        onDismissRequest = { /* 不允许点击外部关闭 */ },
+                        title = { Text("加入请求", fontWeight = FontWeight.Bold) },
+                        text = {
+                            Text("之前被移除的玩家「${firstPending.playerName}」请求重新加入房间（筹码: ${firstPending.buyIn}），是否同意？")
+                        },
                         confirmButton = {
-                            Button(onClick = { vm.dismissKicked() }) {
-                                Text("知道了")
-                            }
+                            Button(
+                                onClick = { vm.approveJoinRequest(firstPending.requestId) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF388E3C))
+                            ) { Text("同意加入") }
+                        },
+                        dismissButton = {
+                            OutlinedButton(
+                                onClick = { vm.rejectJoinRequest(firstPending.requestId) }
+                            ) { Text("拒绝", color = Color(0xFFE53935)) }
                         }
                     )
                 }
@@ -168,10 +177,23 @@ private fun HomeScreen(
     onNavigateJoin: () -> Unit,
     onPlayerNameChange: (String) -> Unit,
     onBuyInChange: (Int) -> Unit,
-    onRejoin: () -> Unit
+    onRejoin: () -> Unit,
+    onDismissKicked: () -> Unit = {}
 ) {
     var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
+
+    // 被踢出弹窗
+    if (state.kickedFromGame) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { onDismissKicked() },
+            title = { Text("已被移出", fontWeight = FontWeight.Bold) },
+            text = { Text("你已被房主移出本局游戏") },
+            confirmButton = {
+                Button(onClick = { onDismissKicked() }) { Text("确定") }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier

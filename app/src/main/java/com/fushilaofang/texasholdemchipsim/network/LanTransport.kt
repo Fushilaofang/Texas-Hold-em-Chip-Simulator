@@ -10,6 +10,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -39,8 +40,20 @@ class LanTableServer(
     private val disconnectedPlayers = mutableMapOf<String, Long>()
     private val disconnectedLock = Any()
 
-    /** 被房主主动踢出的玩家（防止 handleClient finally 重新标记为掉线） */
+    /** 被踢出的玩家名单（按名称记录，用于新加入检查） */
+    private val kickedPlayerNames = mutableSetOf<String>()
+    /** 被踢出的玩家 ID（用于重连检查） */
     private val kickedPlayerIds = mutableSetOf<String>()
+
+    /** 等待房主审批的加入请求 */
+    private data class PendingJoin(
+        val requestId: String,
+        val playerName: String,
+        val buyIn: Int,
+        val deferred: CompletableDeferred<Boolean>
+    )
+    private val pendingJoins = mutableMapOf<String, PendingJoin>()
+    private val pendingJoinsLock = Any()
 
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
@@ -48,6 +61,7 @@ class LanTableServer(
         data class PlayerReconnected(val playerId: String) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
+        data class JoinApprovalRequested(val requestId: String, val playerName: String, val buyIn: Int) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -188,43 +202,54 @@ class LanTableServer(
         }
     }
 
-    /** 房主主动踢出某个玩家：先发送 Kicked 消息，延迟关闭连接以确保消息送达 */
-    fun kickPlayer(playerId: String) {
-        val conn: ClientConnection?
+    /** 房主主动踢出某个玩家，发送 Kicked 消息后关闭连接 */
+    fun kickPlayer(playerId: String, playerName: String) {
+        kickedPlayerNames.add(playerName)
+        kickedPlayerIds.add(playerId)
         synchronized(clientsLock) {
-            conn = clients.remove(playerId)
+            val conn = clients.remove(playerId)
+            conn?.let {
+                // 先发送 Kicked 消息通知客户端
+                try {
+                    val kickedMsg = NetworkMessage.Kicked(reason = "你已被房主移出本局游戏")
+                    val text = json.encodeToString(NetworkMessage.serializer(), kickedMsg)
+                    it.writer.write(text)
+                    it.writer.newLine()
+                    it.writer.flush()
+                } catch (_: Exception) {}
+                it.readerJob.cancel()
+                runCatching { it.socket.close() }
+            }
         }
         synchronized(disconnectedLock) {
             disconnectedPlayers.remove(playerId)
         }
-        // 标记为已踢出，防止 handleClient 的 finally 重新标记为掉线
-        synchronized(disconnectedLock) {
-            kickedPlayerIds.add(playerId)
+    }
+
+    /** 房主批准被踢玩家重新加入 */
+    fun approveJoin(requestId: String) {
+        synchronized(pendingJoinsLock) {
+            pendingJoins.remove(requestId)?.deferred?.complete(true)
         }
-        conn?.let {
-            // 发送 Kicked 通知
-            runCatching {
-                val kickedText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Kicked)
-                it.writer.write(kickedText)
-                it.writer.newLine()
-                it.writer.flush()
-            }
-            // 延迟关闭 socket，给客户端足够时间读取 Kicked 消息
-            scope.launch {
-                delay(500)
-                it.readerJob.cancel()
-                runCatching { it.socket.close() }
-            }
+    }
+
+    /** 房主拒绝被踢玩家重新加入 */
+    fun rejectJoin(requestId: String) {
+        synchronized(pendingJoinsLock) {
+            pendingJoins.remove(requestId)?.deferred?.complete(false)
         }
     }
 
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        synchronized(disconnectedLock) {
-            disconnectedPlayers.clear()
-            kickedPlayerIds.clear()
+        synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        synchronized(pendingJoinsLock) {
+            pendingJoins.values.forEach { it.deferred.complete(false) }
+            pendingJoins.clear()
         }
+        kickedPlayerNames.clear()
+        kickedPlayerIds.clear()
         synchronized(clientsLock) {
             clients.values.forEach {
                 runCatching { it.socket.close() }
@@ -283,6 +308,15 @@ class LanTableServer(
 
                         is NetworkMessage.Reconnect -> {
                             val oldId = msg.playerId
+                            // 检查是否被踢出
+                            if (kickedPlayerIds.contains(oldId)) {
+                                val kickedMsg = NetworkMessage.Kicked(reason = "你已被房主移出本局游戏")
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), kickedMsg))
+                                writer.newLine()
+                                writer.flush()
+                                socket.close()
+                                return@launch
+                            }
                             // 检查是否在掉线等待列表中
                             val isWaitingReconnect = synchronized(disconnectedLock) {
                                 disconnectedPlayers.containsKey(oldId)
@@ -351,6 +385,35 @@ class LanTableServer(
                                 socket.close()
                                 return@launch
                             }
+                            // 检查是否被踢玩家重新加入，需要房主审批
+                            if (kickedPlayerNames.contains(msg.playerName)) {
+                                // 通知客户端等待审批
+                                val pendingMsg = NetworkMessage.JoinPending(message = "等待房主审批加入请求...")
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), pendingMsg))
+                                writer.newLine()
+                                writer.flush()
+
+                                val requestId = UUID.randomUUID().toString()
+                                val deferred = CompletableDeferred<Boolean>()
+                                synchronized(pendingJoinsLock) {
+                                    pendingJoins[requestId] = PendingJoin(requestId, msg.playerName, msg.buyIn, deferred)
+                                }
+                                onEvent(Event.JoinApprovalRequested(requestId, msg.playerName, msg.buyIn))
+
+                                // 挂起等待房主审批
+                                val approved = deferred.await()
+
+                                if (!approved) {
+                                    val err = NetworkMessage.Error(reason = "房主拒绝了你的加入请求")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    writer.newLine()
+                                    writer.flush()
+                                    socket.close()
+                                    return@launch
+                                }
+                                // 审批通过，从黑名单移除
+                                kickedPlayerNames.remove(msg.playerName)
+                            }
                             val playerId = UUID.randomUUID().toString()
                             assignedId = playerId
                             val seatOrder = hostPlayersProvider().size
@@ -402,15 +465,11 @@ class LanTableServer(
                 val id = assignedId
                 if (id != null) {
                     synchronized(clientsLock) { clients.remove(id) }
-                    // 如果是被踢出的玩家，不标记为掉线等待重连
-                    val wasKicked = synchronized(disconnectedLock) { kickedPlayerIds.remove(id) }
-                    if (!wasKicked) {
-                        // 掉线进入等待重连期，不立即移除玩家
-                        synchronized(disconnectedLock) {
-                            disconnectedPlayers[id] = System.currentTimeMillis()
-                        }
-                        onEvent(Event.PlayerDisconnected(id))
+                    // 掉线进入等待重连期，不立即移除玩家
+                    synchronized(disconnectedLock) {
+                        disconnectedPlayers[id] = System.currentTimeMillis()
                     }
+                    onEvent(Event.PlayerDisconnected(id))
                 }
                 runCatching { socket.close() }
             }
@@ -454,8 +513,8 @@ class LanTableClient(
         data class Disconnected(val willReconnect: Boolean) : Event()
         data class Reconnected(val playerId: String) : Event()
         data class ReconnectFailed(val reason: String) : Event()
+        data class Kicked(val reason: String) : Event()
         data class Error(val message: String) : Event()
-        data object Kicked : Event()
     }
 
     @Volatile
@@ -572,8 +631,11 @@ class LanTableClient(
 
                         is NetworkMessage.Kicked -> {
                             shouldReconnect = false
-                            onEvent(Event.Kicked)
-                            return@launch
+                            onEvent(Event.Kicked(msg.reason))
+                        }
+
+                        is NetworkMessage.JoinPending -> {
+                            onEvent(Event.Error(msg.message))
                         }
 
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
