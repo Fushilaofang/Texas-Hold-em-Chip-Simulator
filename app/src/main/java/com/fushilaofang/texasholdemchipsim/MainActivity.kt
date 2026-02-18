@@ -276,7 +276,7 @@ private fun HomeScreen(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            "德州扑克筹码统计",
+            "Texas Hold'em Chips",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
