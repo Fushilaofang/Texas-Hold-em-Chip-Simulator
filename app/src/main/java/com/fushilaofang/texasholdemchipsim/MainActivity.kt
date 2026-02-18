@@ -381,10 +381,11 @@ private fun AvatarPicker(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Text(
-                text = "📷",
-                fontSize = (size / 2.5).sp,
-                color = Color.White
+            Image(
+                painter = androidx.compose.ui.res.painterResource(id = R.drawable.bilibili_default_avatar),
+                contentDescription = "头像",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
@@ -411,15 +412,7 @@ private fun AvatarImage(
     Box(
         modifier = Modifier
             .size(size.dp)
-            .clip(CircleShape)
-            .background(
-                when {
-                    name.isNotEmpty() -> Color(
-                        0xFF607D8B.toInt() + (name.hashCode() and 0x003F3F3F)
-                    )
-                    else -> Color(0xFF9E9E9E)
-                }
-            ),
+            .clip(CircleShape),
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -430,11 +423,11 @@ private fun AvatarImage(
                 modifier = Modifier.fillMaxSize()
             )
         } else {
-            Text(
-                text = name.take(1).uppercase(),
-                fontSize = (size / 2.2).sp,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
+            Image(
+                painter = androidx.compose.ui.res.painterResource(id = R.drawable.bilibili_default_avatar),
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
         }
     }
