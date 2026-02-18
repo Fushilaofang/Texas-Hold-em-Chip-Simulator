@@ -68,12 +68,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -1579,13 +1578,10 @@ private fun CropImageDialog(
                             }
                         }
                 ) {
-                    // 关键修复：Offscreen 离屏合成，使 BlendMode.Clear 只清除当前层
-                    // 而不会透视到背后的 UI（主界面）
-                    Canvas(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    ) {
+                    // 使用 EvenOdd 路径绘制环形遮罩
+                    // 原理：全画布矩形 + 圆形叠加，EvenOdd 规则下圆内填充被抵消
+                    // 圆内图片始终可见，无需 BlendMode
+                    Canvas(modifier = Modifier.fillMaxSize()) {
                         if (containerPx <= 0f) return@Canvas
                         val imgW = originalBitmap.width.toFloat()
                         val imgH = originalBitmap.height.toFloat()
@@ -1595,7 +1591,7 @@ private fun CropImageDialog(
                         val scaledH = imgH * totalScale
                         val left = (size.width - scaledW) / 2f + panX
                         val top = (size.height - scaledH) / 2f + panY
-                        // 绘制图片
+                        // 1. 绘制图片
                         with(drawContext.canvas.nativeCanvas) {
                             drawBitmap(
                                 originalBitmap,
@@ -1604,18 +1600,16 @@ private fun CropImageDialog(
                                 null
                             )
                         }
-                        // 暗化裁切框外区域
+                        // 2. 用 EvenOdd 环形路径绘制圆外暗化区域（圆内不绘制，图片透出）
                         val center = Offset(size.width / 2f, size.height / 2f)
                         val cropR = size.width * 0.43f
-                        drawRect(color = Color.Black.copy(alpha = 0.55f))
-                        // BlendMode.Clear 清除圆形内的暗化层，露出下方图片
-                        drawCircle(
-                            color = Color.Black,
-                            radius = cropR,
-                            center = center,
-                            blendMode = BlendMode.Clear
-                        )
-                        // 白色圆形边框
+                        val overlayPath = Path().apply {
+                            fillType = PathFillType.EvenOdd
+                            addRect(androidx.compose.ui.geometry.Rect(0f, 0f, size.width, size.height))
+                            addOval(androidx.compose.ui.geometry.Rect(center = center, radius = cropR))
+                        }
+                        drawPath(overlayPath, Color.Black.copy(alpha = 0.55f))
+                        // 3. 白色圆形边框
                         drawCircle(
                             color = Color.White,
                             radius = cropR,
