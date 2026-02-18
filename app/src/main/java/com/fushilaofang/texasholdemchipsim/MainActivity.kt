@@ -94,13 +94,25 @@ class MainActivity : ComponentActivity() {
             val context = LocalContext.current
 
             // 图片选择器（申请权限 + 选取）
+            // pendingAvatarBase64：对话框内选图后的临时预览，未点确定前不写入 ViewModel
+            var pendingAvatarBase64 by remember { mutableStateOf("") }
+            var isPickingInDialog by remember { mutableStateOf(false) }
+
             val imagePicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.GetContent()
             ) { uri ->
                 uri?.let {
                     val base64 = AvatarHelper.uriToBase64(context, it)
-                    if (base64.isNotBlank()) vm.saveAvatarBase64(base64)
+                    if (base64.isNotBlank()) {
+                        if (isPickingInDialog) {
+                            // 在修改资料对话框中选图 → 仅写入临时预览，不关闭对话框
+                            pendingAvatarBase64 = base64
+                        } else {
+                            vm.saveAvatarBase64(base64)
+                        }
+                    }
                 }
+                isPickingInDialog = false
             }
             val permissionLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
@@ -117,6 +129,11 @@ class MainActivity : ComponentActivity() {
                 } else {
                     permissionLauncher.launch(permission)
                 }
+            }
+            // 在对话框内选图：设置 flag 后再触发选图
+            val launchAvatarPickerInDialog: () -> Unit = {
+                isPickingInDialog = true
+                launchAvatarPicker()
             }
 
             Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = MaterialTheme.colorScheme.background) {
@@ -158,6 +175,8 @@ class MainActivity : ComponentActivity() {
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
+                        pendingAvatarBase64 = pendingAvatarBase64,
+                        onClearPendingAvatar = { pendingAvatarBase64 = "" },
                         onSubmitContribution = vm::submitMyContribution,
                         onToggleMyWinner = vm::toggleMyWinner,
                         onFold = vm::foldMyself,
@@ -168,7 +187,7 @@ class MainActivity : ComponentActivity() {
                         onMovePlayer = vm::movePlayer,
                         onSetDealer = vm::setDealerInGame,
                         onUpdateMyProfile = vm::updateMyProfile,
-                        onPickAvatar = launchAvatarPicker,
+                        onPickAvatar = launchAvatarPickerInDialog,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -800,7 +819,9 @@ private fun GameScreen(
     getMinContribution: (String) -> Int,
     onLeave: () -> Unit,
     onUpdateMyProfile: (String, String) -> Unit = { _, _ -> },
-    onPickAvatar: () -> Unit = {}
+    onPickAvatar: () -> Unit = {},
+    pendingAvatarBase64: String = "",
+    onClearPendingAvatar: () -> Unit = {}
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
@@ -813,6 +834,7 @@ private fun GameScreen(
     var showBlindEditDialog by remember { mutableStateOf(false) }
     var showReorderPanel by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
+    var showDealerPanel by remember { mutableStateOf(false) }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     // 手间空档：翻牌前且没有任何行动（可调整顺序）
     val isBetweenHands = state.currentRound == BettingRound.PRE_FLOP &&
@@ -838,9 +860,15 @@ private fun GameScreen(
     // 修改本人资料对话框
     if (showEditProfileDialog) {
         val myPlayer = state.players.firstOrNull { it.id == state.selfId }
+        // editName 仅在对话框首次展示时初始化一次
         var editName by remember { mutableStateOf(myPlayer?.name ?: state.savedPlayerName) }
+        // 预览头像：优先用本轮选取的临时头像，否则用已保存的头像
+        val previewAvatar = pendingAvatarBase64.ifBlank { state.savedAvatarBase64 }
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showEditProfileDialog = false },
+            onDismissRequest = {
+                showEditProfileDialog = false
+                onClearPendingAvatar()
+            },
             title = { Text("修改昵称和头像", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
@@ -848,16 +876,21 @@ private fun GameScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // 头像选择器
+                    // 头像选择器：点击后选图，对话框保持打开
                     AvatarPicker(
-                        avatarBase64 = state.savedAvatarBase64,
+                        avatarBase64 = previewAvatar,
                         size = 72,
-                        onClick = {
-                            showEditProfileDialog = false
-                            onPickAvatar()
-                        }
+                        onClick = { onPickAvatar() }
                     )
-                    Text("点击头像可更换图片", fontSize = 11.sp, color = Color.Gray)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text("点击头像可更换图片", fontSize = 11.sp, color = Color.Gray)
+                        if (pendingAvatarBase64.isNotBlank()) {
+                            Text("（已选新图）", fontSize = 11.sp, color = Color(0xFF43A047))
+                        }
+                    }
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it },
@@ -869,26 +902,32 @@ private fun GameScreen(
             },
             confirmButton = {
                 Button(onClick = {
+                    val finalAvatar = pendingAvatarBase64.ifBlank { state.savedAvatarBase64 }
                     if (editName.isNotBlank()) {
-                        onUpdateMyProfile(editName.trim(), state.savedAvatarBase64)
+                        onUpdateMyProfile(editName.trim(), finalAvatar)
                     }
                     showEditProfileDialog = false
+                    onClearPendingAvatar()
                 }) { Text("确定") }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showEditProfileDialog = false }) { Text("取消") }
+                OutlinedButton(onClick = {
+                    showEditProfileDialog = false
+                    onClearPendingAvatar()
+                }) { Text("取消") }
             }
         )
     }
 
     // 游戏中调整玩家顺序面板
+    // 调整玩家顺序对话框（仅移动座位，不涉及选庄）
     if (showReorderPanel && state.mode == TableMode.HOST) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showReorderPanel = false },
-            title = { Text("调整顺序 / 选庄", fontWeight = FontWeight.Bold) },
+            title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("▲▼ 调整座位顺序・点击[设为庄]指定庄家", fontSize = 12.sp, color = Color.Gray)
+                    Text("点击 ▲▼ 调整座位顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
                     reorderPlayers.forEachIndexed { seatIdx, player ->
                         val isDealer = seatIdx == state.blindsState.dealerIndex
@@ -903,7 +942,6 @@ private fun GameScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            // 庄家标记
                             if (isDealer) {
                                 Text(
                                     "[庄]",
@@ -926,28 +964,15 @@ private fun GameScreen(
                                 fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
-                            // 设为庄按钮
-                            if (!isDealer) {
-                                OutlinedButton(
-                                    onClick = { onSetDealer(seatIdx) },
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(30.dp)
-                                ) { Text("设庄", fontSize = 11.sp) }
-                            }
-                            // 上下移动按钮
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                 OutlinedButton(
-                                    onClick = {
-                                        if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1)
-                                    },
+                                    onClick = { if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1) },
                                     enabled = seatIdx > 0,
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                                     modifier = Modifier.height(30.dp)
                                 ) { Text("▲", fontSize = 12.sp) }
                                 OutlinedButton(
-                                    onClick = {
-                                        if (seatIdx < reorderPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1)
-                                    },
+                                    onClick = { if (seatIdx < reorderPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1) },
                                     enabled = seatIdx < reorderPlayers.size - 1,
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
                                     modifier = Modifier.height(30.dp)
@@ -959,6 +984,70 @@ private fun GameScreen(
             },
             confirmButton = {
                 Button(onClick = { showReorderPanel = false }) { Text("完成") }
+            }
+        )
+    }
+
+    // 重新选庄对话框
+    if (showDealerPanel && state.mode == TableMode.HOST) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDealerPanel = false },
+            title = { Text("重新选庄", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("点击[设为庄]指定庄家", fontSize = 12.sp, color = Color.Gray)
+                    val dealerPlayers = state.players.sortedBy { it.seatOrder }
+                    dealerPlayers.forEachIndexed { seatIdx, player ->
+                        val isDealer = seatIdx == state.blindsState.dealerIndex
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = if (isDealer) Color(0xFFFFF8E1) else MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isDealer) {
+                                Text(
+                                    "[庄]",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFE65100),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
+                            } else {
+                                Text(
+                                    "${seatIdx + 1}.",
+                                    fontSize = 13.sp,
+                                    color = Color.Gray,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
+                            }
+                            Text(
+                                player.name,
+                                modifier = Modifier.weight(1f),
+                                fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                            if (!isDealer) {
+                                Button(
+                                    onClick = { onSetDealer(seatIdx); showDealerPanel = false },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                                ) { Text("设为庄", fontSize = 12.sp) }
+                            } else {
+                                Text("当前庄家", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showDealerPanel = false }) { Text("完成") }
             }
         )
     }
@@ -1121,6 +1210,21 @@ private fun GameScreen(
                             enabled = isBetweenHands,
                             onClick = { showMenu = false; showReorderPanel = true }
                         )
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("重新选庄")
+                                    if (!isBetweenHands) {
+                                        Text("(手间可用)", fontSize = 11.sp, color = Color.Gray)
+                                    }
+                                }
+                            },
+                            enabled = isBetweenHands,
+                            onClick = { showMenu = false; showDealerPanel = true }
+                        )
                         HorizontalDivider()
                     }
                     if (state.mode == TableMode.HOST) {
@@ -1146,6 +1250,11 @@ private fun GameScreen(
                         )
                         HorizontalDivider()
                     }
+                    DropdownMenuItem(
+                        text = { Text("修改头像和昵称") },
+                        onClick = { showMenu = false; showEditProfileDialog = true }
+                    )
+                    HorizontalDivider()
                     DropdownMenuItem(
                         text = { Text("返回主界面", color = Color(0xFFE53935)) },
                         onClick = { showMenu = false; showExitConfirm = true }
@@ -1734,14 +1843,23 @@ private fun ChipInputDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    val amount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
-                    if (amount > 0) onConfirm(amount) else onDismiss()
-                },
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
-            ) { Text("确认加注", fontWeight = FontWeight.Bold) }
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Button(
+                    onClick = {
+                        val amount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
+                        if (amount > 0) onConfirm(amount) else onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                ) { Text("确认加注", fontWeight = FontWeight.Bold) }
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("取消") }
+            }
         },
         dismissButton = null
     )
