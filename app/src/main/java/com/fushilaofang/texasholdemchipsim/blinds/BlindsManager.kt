@@ -35,6 +35,11 @@ class BlindsManager {
         return computePositions(dealerIndex = 0, playerCount = playerCount, config = config)
     }
 
+    /** 指定庄家位初始化 */
+    fun computeFromDealer(dealerIndex: Int, playerCount: Int, config: BlindsConfig): BlindsState {
+        return computePositions(dealerIndex = dealerIndex, playerCount = playerCount, config = config)
+    }
+
     /**
      * 庄位前移一位，重新计算大小盲位置
      */

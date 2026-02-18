@@ -33,7 +33,12 @@ sealed class NetworkMessage {
         val sidePotEnabled: Boolean = true,
         val selectedWinnerIds: Set<String> = emptySet(),
         val foldedPlayerIds: Set<String> = emptySet(),
-        val gameStarted: Boolean = false
+        val gameStarted: Boolean = false,
+        // --- 轮次 ---
+        val currentRound: String = "PRE_FLOP",
+        val currentTurnPlayerId: String = "",
+        val roundContributions: Map<String, Int> = emptyMap(),
+        val actedPlayerIds: Set<String> = emptySet()
     ) : NetworkMessage()
 
     /**

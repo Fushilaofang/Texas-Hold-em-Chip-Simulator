@@ -71,6 +71,10 @@ class LanTableServer(
         selectedWinnerIdsProvider: () -> Set<String> = { emptySet() },
         foldedPlayerIdsProvider: () -> Set<String> = { emptySet() },
         gameStartedProvider: () -> Boolean = { false },
+        currentRoundProvider: () -> String = { "PRE_FLOP" },
+        currentTurnPlayerIdProvider: () -> String = { "" },
+        roundContributionsProvider: () -> Map<String, Int> = { emptyMap() },
+        actedPlayerIdsProvider: () -> Set<String> = { emptySet() },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -98,6 +102,10 @@ class LanTableServer(
                             selectedWinnerIdsProvider = selectedWinnerIdsProvider,
                             foldedPlayerIdsProvider = foldedPlayerIdsProvider,
                             gameStartedProvider = gameStartedProvider,
+                            currentRoundProvider = currentRoundProvider,
+                            currentTurnPlayerIdProvider = currentTurnPlayerIdProvider,
+                            roundContributionsProvider = roundContributionsProvider,
+                            actedPlayerIdsProvider = actedPlayerIdsProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
                         )
@@ -162,7 +170,11 @@ class LanTableServer(
         sidePotEnabled: Boolean = true,
         selectedWinnerIds: Set<String> = emptySet(),
         foldedPlayerIds: Set<String> = emptySet(),
-        gameStarted: Boolean = false
+        gameStarted: Boolean = false,
+        currentRound: String = "PRE_FLOP",
+        currentTurnPlayerId: String = "",
+        roundContributions: Map<String, Int> = emptyMap(),
+        actedPlayerIds: Set<String> = emptySet()
     ) {
         val message = NetworkMessage.StateSync(
             players = players,
@@ -174,7 +186,11 @@ class LanTableServer(
             sidePotEnabled = sidePotEnabled,
             selectedWinnerIds = selectedWinnerIds,
             foldedPlayerIds = foldedPlayerIds,
-            gameStarted = gameStarted
+            gameStarted = gameStarted,
+            currentRound = currentRound,
+            currentTurnPlayerId = currentTurnPlayerId,
+            roundContributions = roundContributions,
+            actedPlayerIds = actedPlayerIds
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -231,6 +247,10 @@ class LanTableServer(
         selectedWinnerIdsProvider: () -> Set<String>,
         foldedPlayerIdsProvider: () -> Set<String>,
         gameStartedProvider: () -> Boolean,
+        currentRoundProvider: () -> String,
+        currentTurnPlayerIdProvider: () -> String,
+        roundContributionsProvider: () -> Map<String, Int>,
+        actedPlayerIdsProvider: () -> Set<String>,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -300,7 +320,11 @@ class LanTableServer(
                                     sidePotEnabled = sidePotEnabledProvider(),
                                     selectedWinnerIds = selectedWinnerIdsProvider(),
                                     foldedPlayerIds = foldedPlayerIdsProvider(),
-                                    gameStarted = gameStartedProvider()
+                                    gameStarted = gameStartedProvider(),
+                                    currentRound = currentRoundProvider(),
+                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                    roundContributions = roundContributionsProvider(),
+                                    actedPlayerIds = actedPlayerIdsProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                                 writer.newLine()
@@ -369,7 +393,11 @@ class LanTableServer(
                                 sidePotEnabled = sidePotEnabledProvider(),
                                 selectedWinnerIds = selectedWinnerIdsProvider(),
                                 foldedPlayerIds = foldedPlayerIdsProvider(),
-                                gameStarted = gameStartedProvider()
+                                gameStarted = gameStartedProvider(),
+                                currentRound = currentRoundProvider(),
+                                currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                roundContributions = roundContributionsProvider(),
+                                actedPlayerIds = actedPlayerIdsProvider()
                             )
                             writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                             writer.newLine()
@@ -442,7 +470,11 @@ class LanTableClient(
             val sidePotEnabled: Boolean = true,
             val selectedWinnerIds: Set<String> = emptySet(),
             val foldedPlayerIds: Set<String> = emptySet(),
-            val gameStarted: Boolean = false
+            val gameStarted: Boolean = false,
+            val currentRound: String = "PRE_FLOP",
+            val currentTurnPlayerId: String = "",
+            val roundContributions: Map<String, Int> = emptyMap(),
+            val actedPlayerIds: Set<String> = emptySet()
         ) : Event()
 
         data class Disconnected(val willReconnect: Boolean) : Event()
@@ -546,7 +578,11 @@ class LanTableClient(
                                     sidePotEnabled = msg.sidePotEnabled,
                                     selectedWinnerIds = msg.selectedWinnerIds,
                                     foldedPlayerIds = msg.foldedPlayerIds,
-                                    gameStarted = msg.gameStarted
+                                    gameStarted = msg.gameStarted,
+                                    currentRound = msg.currentRound,
+                                    currentTurnPlayerId = msg.currentTurnPlayerId,
+                                    roundContributions = msg.roundContributions,
+                                    actedPlayerIds = msg.actedPlayerIds
                                 )
                             )
                         }

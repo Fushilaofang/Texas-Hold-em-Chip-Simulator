@@ -57,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fushilaofang.texasholdemchipsim.blinds.BlindsConfig
 import com.fushilaofang.texasholdemchipsim.model.PlayerState
 import com.fushilaofang.texasholdemchipsim.network.DiscoveredRoom
+import com.fushilaofang.texasholdemchipsim.ui.BettingRound
 import com.fushilaofang.texasholdemchipsim.ui.ScreenState
 import com.fushilaofang.texasholdemchipsim.ui.TableMode
 import com.fushilaofang.texasholdemchipsim.ui.TableUiState
@@ -105,7 +106,9 @@ class MainActivity : ComponentActivity() {
                         onStartGame = vm::startGame,
                         onLeave = vm::goHome,
                         onToggleBlinds = vm::toggleBlinds,
-                        onToggleSidePot = vm::toggleSidePot
+                        onToggleSidePot = vm::toggleSidePot,
+                        onMovePlayer = vm::movePlayer,
+                        onSetInitialDealer = vm::setInitialDealer
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -416,7 +419,9 @@ private fun LobbyScreen(
     onStartGame: () -> Unit,
     onLeave: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    onToggleSidePot: (Boolean) -> Unit
+    onToggleSidePot: (Boolean) -> Unit,
+    onMovePlayer: (String, Int) -> Unit,
+    onSetInitialDealer: (Int) -> Unit
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
@@ -464,20 +469,35 @@ private fun LobbyScreen(
         }
 
         HorizontalDivider()
-        Text("玩家列表", fontWeight = FontWeight.Bold)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("玩家列表", fontWeight = FontWeight.Bold)
+            if (state.mode == TableMode.HOST) {
+                Spacer(Modifier.weight(1f))
+                Text("点击玩家设为庄家 / ▲▼调整顺序", fontSize = 11.sp, color = Color.Gray)
+            }
+        }
 
         LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sortedPlayers, key = { it.id }) { player ->
                 val isMe = player.id == state.selfId
                 val isOffline = state.disconnectedPlayerIds.contains(player.id)
+                val seatIdx = sortedPlayers.indexOf(player)
+                val isDealer = seatIdx == state.initialDealerIndex
 
                 val cardColor = when {
                     isOffline -> Color(0xFFEEEEEE)
+                    isDealer && state.mode == TableMode.HOST -> Color(0xFFFFF8E1)
                     player.isReady -> Color(0xFFE8F5E9)
                     else -> MaterialTheme.colorScheme.surface
                 }
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (state.mode == TableMode.HOST) {
+                                Modifier.clickable { onSetInitialDealer(seatIdx) }
+                            } else Modifier
+                        ),
                     colors = CardDefaults.cardColors(containerColor = cardColor)
                 ) {
                     Row(
@@ -487,8 +507,11 @@ private fun LobbyScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (isDealer && state.mode == TableMode.HOST) {
+                                    Text("[庄]", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
+                                }
                                 Text(
                                     "${player.name}",
                                     fontWeight = FontWeight.SemiBold
@@ -499,10 +522,30 @@ private fun LobbyScreen(
                             }
                             Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                         }
+
+                        // 房主：▲▼ 调整顺序按钮
+                        if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                OutlinedButton(
+                                    onClick = { if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1) },
+                                    enabled = seatIdx > 0,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) { Text("▲", fontSize = 12.sp) }
+                                OutlinedButton(
+                                    onClick = { if (seatIdx < sortedPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1) },
+                                    enabled = seatIdx < sortedPlayers.size - 1,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) { Text("▼", fontSize = 12.sp) }
+                            }
+                        }
+
                         Text(
                             if (player.isReady) "✔ 已准备" else "未准备",
                             color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 8.dp)
                         )
                     }
                 }
@@ -586,6 +629,16 @@ private fun GameScreen(
     val dealerName = sortedPlayers.getOrNull(state.blindsState.dealerIndex)?.name ?: "-"
     val sbName = sortedPlayers.getOrNull(state.blindsState.smallBlindIndex)?.name ?: "-"
     val bbName = sortedPlayers.getOrNull(state.blindsState.bigBlindIndex)?.name ?: "-"
+    val roundLabel = when (state.currentRound) {
+        BettingRound.PRE_FLOP -> "翻牌前"
+        BettingRound.FLOP -> "翻牌圈"
+        BettingRound.TURN -> "转牌圈"
+        BettingRound.RIVER -> "河牌圈"
+        BettingRound.SHOWDOWN -> "摊牌"
+    }
+    val turnPlayerName = sortedPlayers.firstOrNull { it.id == state.currentTurnPlayerId }?.name ?: ""
+    val isMyTurn = state.currentTurnPlayerId == state.selfId
+    val isShowdown = state.currentRound == BettingRound.SHOWDOWN
 
     Column(
         modifier = Modifier
@@ -602,11 +655,25 @@ private fun GameScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
+                    Text(
+                        roundLabel,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
+                    )
                 }
                 if (state.blindsEnabled && sortedPlayers.size >= 2) {
                     Text(
                         "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
                         fontSize = 11.sp, color = Color.Gray, maxLines = 1
+                    )
+                }
+                if (!isShowdown && turnPlayerName.isNotEmpty()) {
+                    Text(
+                        if (isMyTurn) "轮到你行动" else "等待 $turnPlayerName 行动",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isMyTurn) Color(0xFFE65100) else Color.Gray
                     )
                 }
             }
@@ -765,8 +832,14 @@ private fun GameScreen(
         // 筹码投入弹窗
         if (showChipDialog) {
             val myPlayer = sortedPlayers.firstOrNull { it.id == state.selfId }
+            val totalPrev = state.contributionInputs[state.selfId]?.toIntOrNull() ?: 0
+            val myRoundContrib = state.roundContributions[state.selfId] ?: 0
+            val maxAvailable = (myPlayer?.chips ?: 0) - totalPrev - myRoundContrib
+            val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
+            val callAmount = (currentMaxBet - myRoundContrib).coerceAtLeast(0)
             ChipInputDialog(
-                maxChips = myPlayer?.chips ?: 0,
+                maxChips = maxAvailable,
+                callAmount = callAmount,
                 onDismiss = { showChipDialog = false },
                 onConfirm = { amount ->
                     showChipDialog = false
@@ -774,6 +847,13 @@ private fun GameScreen(
                 }
             )
         }
+
+        // 操作可用性
+        val canAct = isMyTurn && !isFolded && !isShowdown
+        val canFold = canAct
+        val canBet = canAct
+        val canWin = isShowdown && !isFolded
+        val canSettle = isShowdown && state.mode == TableMode.HOST
 
         val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { 2 })
         Card(
@@ -793,10 +873,10 @@ private fun GameScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (page == 0) {
-                            // 第一页：弃牌 + 投入
+                            // 第一页：弃牌 + 过牌/投入
                             Button(
-                                onClick = { if (!isFolded) showFoldConfirm = true },
-                                enabled = !isFolded,
+                                onClick = { if (canFold) showFoldConfirm = true },
+                                enabled = canFold,
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFFE53935),
@@ -804,15 +884,43 @@ private fun GameScreen(
                                 )
                             ) { Text("弃牌", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
 
+                            // 过牌/跟注按钮
+                            val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
+                            val myRoundContrib = state.roundContributions[state.selfId] ?: 0
+                            val callNeeded = currentMaxBet - myRoundContrib
+                            if (callNeeded <= 0) {
+                                // 可以过牌
+                                Button(
+                                    onClick = { if (canAct) onSubmitContribution(0) },
+                                    enabled = canAct,
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF43A047),
+                                        disabledContainerColor = Color(0xFFBDBDBD)
+                                    )
+                                ) { Text("过牌", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            } else {
+                                // 需要跟注
+                                Button(
+                                    onClick = { if (canAct) onSubmitContribution(callNeeded) },
+                                    enabled = canAct,
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF43A047),
+                                        disabledContainerColor = Color(0xFFBDBDBD)
+                                    )
+                                ) { Text("跟注 $callNeeded", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold) }
+                            }
+
                             Button(
-                                onClick = { if (!isFolded) showChipDialog = true },
-                                enabled = !isFolded,
+                                onClick = { if (canBet) showChipDialog = true },
+                                enabled = canBet,
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF1976D2),
                                     disabledContainerColor = Color(0xFFBDBDBD)
                                 )
-                            ) { Text("投入", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            ) { Text("加注", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
 
                             Text(
                                 "〈",
@@ -821,11 +929,11 @@ private fun GameScreen(
                                 modifier = Modifier.padding(start = 4.dp)
                             )
                         } else {
-                            // 第二页：Win + 结算本手（房主）
+                            // 第二页：Win + 结算本手（摊牌阶段可用）
                             val isWinner = state.selectedWinnerIds.contains(state.selfId)
                             Button(
-                                onClick = { if (!isFolded) onToggleMyWinner() },
-                                enabled = !isFolded,
+                                onClick = { if (canWin) onToggleMyWinner() },
+                                enabled = canWin,
                                 modifier = Modifier.weight(1f).height(48.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = if (isWinner) Color(0xFF388E3C) else Color(0xFF9E9E9E),
@@ -835,9 +943,13 @@ private fun GameScreen(
 
                             if (state.mode == TableMode.HOST) {
                                 Button(
-                                    onClick = { showSettleConfirm = true },
+                                    onClick = { if (canSettle) showSettleConfirm = true },
+                                    enabled = canSettle,
                                     modifier = Modifier.weight(1f).height(48.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiary,
+                                        disabledContainerColor = Color(0xFFBDBDBD)
+                                    )
                                 ) { Text("结算本手", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                             }
                         }
@@ -862,6 +974,7 @@ private fun CompactPlayerCard(
     val isMe = player.id == state.selfId
     val isOffline = state.disconnectedPlayerIds.contains(player.id)
     val isFolded = state.foldedPlayerIds.contains(player.id)
+    val isCurrentTurn = player.id == state.currentTurnPlayerId && state.currentRound != BettingRound.SHOWDOWN
 
     val roleTag = buildString {
         if (state.blindsEnabled && state.players.size >= 2) {
@@ -873,11 +986,13 @@ private fun CompactPlayerCard(
     val cardColor = when {
         isFolded -> Color(0xFFE0E0E0)
         isOffline -> Color(0xFFEEEEEE)
+        isCurrentTurn -> Color(0xFFFFE0B2) // 橙色高亮：当前行动者
         isMe -> Color(0xFFFFF8E1)
         state.blindsEnabled && seatIdx == state.blindsState.dealerIndex -> Color(0xFFE3F2FD)
         else -> MaterialTheme.colorScheme.surface
     }
     val submittedAmount = state.contributionInputs[player.id]
+    val roundContrib = state.roundContributions[player.id]
 
     Box(modifier = modifier) {
         Card(
@@ -933,7 +1048,7 @@ private fun CompactPlayerCard(
                     }
                 }
 
-                // 右侧：筹码 + 投入
+                // 右侧：筹码 + 投入 + 本轮投入
                 Column(
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -943,15 +1058,29 @@ private fun CompactPlayerCard(
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    if (!submittedAmount.isNullOrBlank()) {
+                    if (!submittedAmount.isNullOrBlank() && submittedAmount != "0") {
                         Text(
-                            "投入 $submittedAmount",
+                            "总投入 $submittedAmount",
                             fontSize = 12.sp,
                             color = Color(0xFF388E3C),
                             fontWeight = FontWeight.Medium
                         )
-                    } else {
-                        Text("未提交", fontSize = 11.sp, color = Color.Gray)
+                    }
+                    if (roundContrib != null && roundContrib > 0) {
+                        Text(
+                            "本轮 $roundContrib",
+                            fontSize = 11.sp,
+                            color = Color(0xFF1976D2),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (isCurrentTurn) {
+                        Text(
+                            "⬤ 行动中",
+                            fontSize = 10.sp,
+                            color = Color(0xFFE65100),
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -964,6 +1093,7 @@ private fun CompactPlayerCard(
 @Composable
 private fun ChipInputDialog(
     maxChips: Int,
+    callAmount: Int = 0,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
@@ -976,12 +1106,25 @@ private fun ChipInputDialog(
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("投入筹码", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
+        title = { Text("加注筹码", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) },
         text = {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // 提示信息
+                if (callAmount > 0) {
+                    Text(
+                        "跟注需要 $callAmount，加注请选择更多",
+                        fontSize = 12.sp,
+                        color = Color.Gray
+                    )
+                }
+                Text(
+                    "可用筹码: $maxChips",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
                 // 已选金额显示
                 Text(
                     "投入: ${if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount}",
@@ -1152,11 +1295,11 @@ private fun ChipInputDialog(
             Button(
                 onClick = {
                     val amount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
-                    onConfirm(amount)
+                    if (amount > 0) onConfirm(amount) else onDismiss()
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
-            ) { Text("确认投入", fontWeight = FontWeight.Bold) }
+            ) { Text("确认加注", fontWeight = FontWeight.Bold) }
         },
         dismissButton = null
     )

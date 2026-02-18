@@ -45,6 +45,10 @@ enum class ScreenState {
     GAME            // 游戏中
 }
 
+enum class BettingRound {
+    PRE_FLOP, FLOP, TURN, RIVER, SHOWDOWN
+}
+
 data class TableUiState(
     val mode: TableMode = TableMode.IDLE,
     val screen: ScreenState = ScreenState.HOME,
@@ -60,6 +64,12 @@ data class TableUiState(
     val logs: List<ChipTransaction> = emptyList(),
     val info: String = "准备开始",
     val gameStarted: Boolean = false,
+    // --- 轮次/回合 ---
+    val currentRound: BettingRound = BettingRound.PRE_FLOP,
+    val currentTurnPlayerId: String = "",
+    val roundContributions: Map<String, Int> = emptyMap(),
+    val actedPlayerIds: Set<String> = emptySet(),
+    val initialDealerIndex: Int = 0,
     // --- 盲注 ---
     val blindsState: BlindsState = BlindsState(),
     val blindsEnabled: Boolean = true,
@@ -332,6 +342,275 @@ class TableViewModel(
         }
     }
 
+    // ==================== 轮次 / 回合管理 ====================
+
+    /** 获取按座位排序的活跃玩家（未弃牌、未掉线） */
+    private fun getActivePlayers(state: TableUiState): List<PlayerState> {
+        val sorted = state.players.sortedBy { it.seatOrder }
+        return sorted.filter { p ->
+            !state.foldedPlayerIds.contains(p.id) &&
+            !state.disconnectedPlayerIds.contains(p.id)
+        }
+    }
+
+    /** 判断玩家是否已 all-in（总投入 ≥ 筹码） */
+    private fun isPlayerAllIn(state: TableUiState, player: PlayerState): Boolean {
+        val totalPrev = state.contributionInputs[player.id]?.toIntOrNull() ?: 0
+        val currentRound = state.roundContributions[player.id] ?: 0
+        return totalPrev + currentRound >= player.chips
+    }
+
+    /**
+     * 计算下一个行动玩家的 ID。
+     * 跳过弃牌、掉线、已 all-in 的玩家。
+     */
+    private fun getNextTurnPlayerId(state: TableUiState, afterPlayerId: String): String {
+        val sorted = state.players.sortedBy { it.seatOrder }
+        val actionable = sorted.filter { p ->
+            !state.foldedPlayerIds.contains(p.id) &&
+            !state.disconnectedPlayerIds.contains(p.id) &&
+            !isPlayerAllIn(state, p)
+        }
+        if (actionable.isEmpty()) return ""
+
+        val currentIdx = actionable.indexOfFirst { it.id == afterPlayerId }
+        if (currentIdx != -1) {
+            return actionable[(currentIdx + 1) % actionable.size].id
+        }
+
+        // afterPlayerId 不在 actionable 中（如刚弃牌/all-in），按座位找下一个
+        val afterSeat = sorted.firstOrNull { it.id == afterPlayerId }?.seatOrder ?: return actionable.first().id
+        val nextActive = actionable.firstOrNull { it.seatOrder > afterSeat } ?: actionable.first()
+        return nextActive.id
+    }
+
+    /** 翻牌前首个行动玩家 = BB 之后的下一位可行动玩家 */
+    private fun getPreFlopFirstPlayerId(state: TableUiState, blinds: BlindsState): String {
+        val sorted = state.players.sortedBy { it.seatOrder }
+        val actionable = sorted.filter { p ->
+            !state.foldedPlayerIds.contains(p.id) &&
+            !state.disconnectedPlayerIds.contains(p.id) &&
+            !isPlayerAllIn(state, p)
+        }
+        if (actionable.isEmpty()) return ""
+        val bbPlayer = sorted.getOrNull(blinds.bigBlindIndex) ?: return actionable.first().id
+        val bbIdxInActionable = actionable.indexOfFirst { it.id == bbPlayer.id }
+        if (bbIdxInActionable == -1) return actionable.first().id
+        return actionable[(bbIdxInActionable + 1) % actionable.size].id
+    }
+
+    /** 翻牌后首个行动玩家 = 庄家之后的第一位可行动玩家 */
+    private fun getPostFlopFirstPlayerId(state: TableUiState, blinds: BlindsState): String {
+        val sorted = state.players.sortedBy { it.seatOrder }
+        val actionable = sorted.filter { p ->
+            !state.foldedPlayerIds.contains(p.id) &&
+            !state.disconnectedPlayerIds.contains(p.id) &&
+            !isPlayerAllIn(state, p)
+        }
+        if (actionable.isEmpty()) return ""
+        val dealerPlayer = sorted.getOrNull(blinds.dealerIndex) ?: return actionable.first().id
+        val dealerIdxInActionable = actionable.indexOfFirst { it.id == dealerPlayer.id }
+        if (dealerIdxInActionable == -1) return actionable.first().id
+        return actionable[(dealerIdxInActionable + 1) % actionable.size].id
+    }
+
+    /**
+     * 检查当前轮是否完成：
+     * - 所有活跃玩家都已行动（actedPlayerIds）
+     * - 所有已行动的玩家投入匹配最高投入（或已 all-in）
+     */
+    private fun isRoundComplete(state: TableUiState): Boolean {
+        val activePlayers = getActivePlayers(state)
+        if (activePlayers.size <= 1) return true
+
+        val maxBet = state.roundContributions.values.maxOrNull() ?: 0
+        return activePlayers.all { p ->
+            val rc = state.roundContributions[p.id] ?: 0
+            val isAllIn = isPlayerAllIn(state, p)
+            state.actedPlayerIds.contains(p.id) && (rc == maxBet || isAllIn)
+        }
+    }
+
+    /** 推进到下一个轮次（FLOP → TURN → RIVER → SHOWDOWN） */
+    private fun advanceRound() {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+
+        val nextRound = when (state.currentRound) {
+            BettingRound.PRE_FLOP -> BettingRound.FLOP
+            BettingRound.FLOP -> BettingRound.TURN
+            BettingRound.TURN -> BettingRound.RIVER
+            BettingRound.RIVER -> BettingRound.SHOWDOWN
+            BettingRound.SHOWDOWN -> return
+        }
+
+        // 将本轮投入累加到总投入
+        val newContribs = state.contributionInputs.toMutableMap()
+        state.roundContributions.forEach { (pid, rc) ->
+            val prev = newContribs[pid]?.toIntOrNull() ?: 0
+            newContribs[pid] = (prev + rc).toString()
+        }
+
+        val activePlayers = getActivePlayers(state)
+
+        // 可行动的玩家（非 all-in）
+        val updatedState = state.copy(contributionInputs = newContribs, roundContributions = emptyMap())
+        val actionable = activePlayers.filter { p -> !isPlayerAllIn(updatedState, p) }
+
+        if (nextRound == BettingRound.SHOWDOWN || activePlayers.size <= 1 || actionable.size <= 1) {
+            // 进入摊牌 或 仅剩一人/只剩 all-in 玩家 → 自动进入 SHOWDOWN
+            _uiState.update {
+                it.copy(
+                    currentRound = BettingRound.SHOWDOWN,
+                    currentTurnPlayerId = "",
+                    roundContributions = emptyMap(),
+                    actedPlayerIds = emptySet(),
+                    contributionInputs = newContribs,
+                    info = "摊牌阶段 - 请标记赢家并结算"
+                )
+            }
+        } else {
+            val firstPlayer = getPostFlopFirstPlayerId(updatedState, state.blindsState)
+            val roundName = when (nextRound) {
+                BettingRound.FLOP -> "翻牌圈"
+                BettingRound.TURN -> "转牌圈"
+                BettingRound.RIVER -> "河牌圈"
+                else -> ""
+            }
+            val turnName = state.players.firstOrNull { it.id == firstPlayer }?.name ?: "?"
+            _uiState.update {
+                it.copy(
+                    currentRound = nextRound,
+                    currentTurnPlayerId = firstPlayer,
+                    roundContributions = emptyMap(),
+                    actedPlayerIds = emptySet(),
+                    contributionInputs = newContribs,
+                    info = "$roundName 开始 - $turnName 行动"
+                )
+            }
+        }
+        syncToClients()
+    }
+
+    /** 当前轮行动后，推进到下一位玩家或下一轮 */
+    private fun advanceTurnOrRound() {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+
+        val activePlayers = getActivePlayers(state)
+        if (activePlayers.size <= 1) {
+            advanceRound()
+            return
+        }
+
+        if (isRoundComplete(state)) {
+            advanceRound()
+        } else {
+            val nextPlayer = getNextTurnPlayerId(state, state.currentTurnPlayerId)
+            if (nextPlayer.isBlank()) {
+                advanceRound()
+                return
+            }
+            val pName = state.players.firstOrNull { it.id == nextPlayer }?.name ?: "?"
+            _uiState.update {
+                it.copy(
+                    currentTurnPlayerId = nextPlayer,
+                    info = "$pName 行动"
+                )
+            }
+            syncToClients()
+        }
+    }
+
+    // ==================== 投入/弃牌处理（HOST 逻辑，服务端和本地共用） ====================
+
+    /**
+     * 处理投入请求（仅 HOST 调用）
+     * @param playerId 玩家 ID
+     * @param amount 增量金额
+     */
+    private fun processContribution(playerId: String, amount: Int) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        if (state.currentRound == BettingRound.SHOWDOWN) return
+
+        val player = state.players.firstOrNull { it.id == playerId } ?: return
+        val currentRoundContrib = state.roundContributions[playerId] ?: 0
+        val newRoundContrib = currentRoundContrib + amount
+        val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
+        val isRaise = newRoundContrib > currentMaxBet
+
+        val playerName = player.name
+        _uiState.update {
+            val newRoundContribs = it.roundContributions + (playerId to newRoundContrib)
+            val newActed = if (isRaise) setOf(playerId) else it.actedPlayerIds + playerId
+            it.copy(
+                roundContributions = newRoundContribs,
+                actedPlayerIds = newActed,
+                info = "$playerName 投入本轮: $newRoundContrib${if (isRaise) " (加注)" else ""}"
+            )
+        }
+        advanceTurnOrRound()
+    }
+
+    /**
+     * 处理弃牌请求（仅 HOST 调用）
+     */
+    private fun processFold(playerId: String) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+
+        val playerName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
+        _uiState.update {
+            it.copy(
+                foldedPlayerIds = it.foldedPlayerIds + playerId,
+                info = "$playerName 已弃牌"
+            )
+        }
+        advanceTurnOrRound()
+    }
+
+    // ==================== 大厅：排序 / 设庄 ====================
+
+    /** 房主交换两个座位的顺序 */
+    fun swapSeatOrder(fromPlayerId: String, toPlayerId: String) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val fromP = state.players.firstOrNull { it.id == fromPlayerId } ?: return
+        val toP = state.players.firstOrNull { it.id == toPlayerId } ?: return
+        val newPlayers = state.players.map {
+            when (it.id) {
+                fromPlayerId -> it.copy(seatOrder = toP.seatOrder)
+                toPlayerId -> it.copy(seatOrder = fromP.seatOrder)
+                else -> it
+            }
+        }
+        _uiState.update { it.copy(players = newPlayers) }
+        syncToClients()
+    }
+
+    /** 房主移动玩家到指定位置 */
+    fun movePlayer(playerId: String, newIndex: Int) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val sorted = state.players.sortedBy { it.seatOrder }.toMutableList()
+        val player = sorted.firstOrNull { it.id == playerId } ?: return
+        sorted.remove(player)
+        val safeIndex = newIndex.coerceIn(0, sorted.size)
+        sorted.add(safeIndex, player)
+        val reindexed = sorted.mapIndexed { idx, p -> p.copy(seatOrder = idx) }
+        _uiState.update { it.copy(players = reindexed) }
+        syncToClients()
+    }
+
+    /** 房主设置首手庄家索引 */
+    fun setInitialDealer(playerIndex: Int) {
+        if (_uiState.value.mode != TableMode.HOST) return
+        _uiState.update { it.copy(initialDealerIndex = playerIndex) }
+    }
+
+    // ==================== 开始游戏 / 结算 ====================
+
     /** 房主点击"开始游戏" */
     fun startGame() {
         val state = _uiState.value
@@ -347,11 +626,25 @@ class TableViewModel(
             return
         }
 
-        // 初始化盲注位
-        val blinds = blindsManager.initialize(state.players.size, state.blindsState.config)
+        // 初始化盲注位（使用大厅设置的庄家索引）
+        val safeDealer = state.initialDealerIndex.coerceIn(0, state.players.size - 1)
+        val blinds = blindsManager.computeFromDealer(safeDealer, state.players.size, state.blindsState.config)
         val blindPrefills = if (state.blindsEnabled) {
             blindsManager.calculateBlindPrefills(state.players, blinds)
         } else emptyMap()
+
+        // 翻牌前：盲注计入 roundContributions，首位行动 = UTG
+        val roundContribs = if (state.blindsEnabled) blindPrefills else emptyMap()
+        val tmpState = state.copy(
+            blindsState = blinds,
+            foldedPlayerIds = emptySet()
+        )
+        val firstTurn = if (state.blindsEnabled) {
+            getPreFlopFirstPlayerId(tmpState, blinds)
+        } else {
+            getPostFlopFirstPlayerId(tmpState, blinds)
+        }
+        val firstName = state.players.sortedBy { it.seatOrder }.firstOrNull { it.id == firstTurn }?.name ?: "?"
 
         _uiState.update {
             it.copy(
@@ -359,8 +652,14 @@ class TableViewModel(
                 gameStarted = true,
                 blindsState = blinds,
                 blindContributions = blindPrefills,
-                contributionInputs = blindPrefills.mapValues { (_, v) -> v.toString() },
-                info = "游戏开始！Hand #${state.handCounter}"
+                contributionInputs = emptyMap(), // 总投入从空开始，盲注仅在 roundContributions
+                currentRound = BettingRound.PRE_FLOP,
+                currentTurnPlayerId = firstTurn,
+                roundContributions = roundContribs,
+                actedPlayerIds = emptySet(),
+                foldedPlayerIds = emptySet(),
+                selectedWinnerIds = emptySet(),
+                info = "翻牌前 - $firstName 行动 | Hand #${state.handCounter}"
             )
         }
         syncToClients()
@@ -368,8 +667,8 @@ class TableViewModel(
     }
 
     /**
-     * 结算本手并自动开始下一手：结算→轮转庄位→扣除盲注
-     * 如果是第一手（尚无人提交投入），则跳过结算直接开始。
+     * 结算本手并自动开始下一手：结算→轮转庄位→扣除盲注→设置翻牌前
+     * 仅在摊牌阶段可操作。
      */
     fun settleAndAdvance() {
         val state = _uiState.value
@@ -382,8 +681,23 @@ class TableViewModel(
             return
         }
 
+        // 仅在摊牌阶段允许结算（首手无投入时跳过此检查）
+        val hasAnyContrib = state.contributionInputs.values.any { (it.toIntOrNull() ?: 0) > 0 } ||
+                state.roundContributions.values.any { it > 0 }
+        if (hasAnyContrib && state.currentRound != BettingRound.SHOWDOWN) {
+            _uiState.update { it.copy(info = "请完成所有投注轮次后再结算") }
+            return
+        }
+
+        // 先将未累加的 roundContributions 合并到 contributionInputs
+        val mergedContribs = state.contributionInputs.toMutableMap()
+        state.roundContributions.forEach { (pid, rc) ->
+            val prev = mergedContribs[pid]?.toIntOrNull() ?: 0
+            mergedContribs[pid] = (prev + rc).toString()
+        }
+
         // ---------- 1) 结算当前手（如果有投入）----------
-        val hasContributions = state.contributionInputs.values.any { (it.toIntOrNull() ?: 0) > 0 }
+        val hasContributions = mergedContribs.values.any { (it.toIntOrNull() ?: 0) > 0 }
         var playersAfterSettle = state.players
         var logsAfterSettle = state.logs
         var settleInfo = ""
@@ -395,21 +709,12 @@ class TableViewModel(
                 return
             }
 
-            // 盲注规则校验
-            if (state.blindsEnabled && state.players.size >= 2) {
-                val blindsViolations = validateBlinds(state)
-                if (blindsViolations.isNotEmpty()) {
-                    _uiState.update { it.copy(info = "盲注校验失败: ${blindsViolations.joinToString("; ")}") }
-                    return
-                }
-            }
-
             val contributions = state.players.associate { player ->
-                val raw = state.contributionInputs[player.id].orEmpty()
+                val raw = mergedContribs[player.id].orEmpty()
                 player.id to (raw.toIntOrNull() ?: 0)
             }
 
-            // 边池关闭时：将所有有投入玩家的金额统一设为最大值，使结算引擎只生成单一主池
+            // 边池关闭时：将所有有投入玩家的金额统一设为最大值
             val effectiveContributions = if (!state.sidePotEnabled) {
                 val maxContrib = contributions.values.maxOrNull() ?: 0
                 contributions.mapValues { (_, v) -> if (v > 0) maxContrib else 0 }
@@ -438,19 +743,28 @@ class TableViewModel(
             }
         }
 
-        // ---------- 2) 轮转庄位 + 扣盲注（下一手准备）----------
+        // ---------- 2) 轮转庄位 + 设置下一手翻牌前 ----------
         val nextHandCounter = if (hasContributions) state.handCounter + 1 else state.handCounter
         val newBlinds = blindsManager.rotate(state.blindsState, playersAfterSettle.size)
 
         if (state.blindsEnabled) {
-            // 只预填盲注金额到 contributionInputs，不从筹码中扣除
-            // 结算引擎会在下一手结算时统一处理扣款
             val blindPrefills = blindsManager.calculateBlindPrefills(playersAfterSettle, newBlinds)
-            val prefilled = blindPrefills.mapValues { (_, v) -> v.toString() }
+
+            // 设置下一手的翻牌前
+            val tmpState = state.copy(
+                players = playersAfterSettle,
+                blindsState = newBlinds,
+                foldedPlayerIds = emptySet(),
+                contributionInputs = emptyMap(),
+                roundContributions = blindPrefills
+            )
+            val firstTurn = getPreFlopFirstPlayerId(tmpState, newBlinds)
+            val firstName = playersAfterSettle.sortedBy { it.seatOrder }
+                .firstOrNull { it.id == firstTurn }?.name ?: "?"
 
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
-                append("Hand #$nextHandCounter | 庄:座位${newBlinds.dealerIndex} 小盲:座位${newBlinds.smallBlindIndex} 大盲:座位${newBlinds.bigBlindIndex}")
+                append("Hand #$nextHandCounter | 翻牌前 - $firstName 行动")
             }
 
             _uiState.update {
@@ -459,18 +773,33 @@ class TableViewModel(
                     handCounter = nextHandCounter,
                     blindsState = newBlinds,
                     blindContributions = blindPrefills,
-                    contributionInputs = prefilled,
+                    contributionInputs = emptyMap(),
                     selectedWinnerIds = emptySet(),
                     foldedPlayerIds = emptySet(),
                     lastSidePots = sidePots,
                     logs = logsAfterSettle,
+                    currentRound = BettingRound.PRE_FLOP,
+                    currentTurnPlayerId = firstTurn,
+                    roundContributions = blindPrefills,
+                    actedPlayerIds = emptySet(),
                     info = infoText
                 )
             }
         } else {
+            val tmpState = state.copy(
+                players = playersAfterSettle,
+                blindsState = newBlinds,
+                foldedPlayerIds = emptySet(),
+                contributionInputs = emptyMap(),
+                roundContributions = emptyMap()
+            )
+            val firstTurn = getPostFlopFirstPlayerId(tmpState, newBlinds)
+            val firstName = playersAfterSettle.sortedBy { it.seatOrder }
+                .firstOrNull { it.id == firstTurn }?.name ?: "?"
+
             val infoText = buildString {
                 if (settleInfo.isNotEmpty()) append("结算完成: $settleInfo | ")
-                append("Hand #$nextHandCounter | 庄:座位${newBlinds.dealerIndex} (无盲注)")
+                append("Hand #$nextHandCounter | 翻牌前 - $firstName 行动")
             }
 
             _uiState.update {
@@ -484,6 +813,10 @@ class TableViewModel(
                     foldedPlayerIds = emptySet(),
                     lastSidePots = sidePots,
                     logs = logsAfterSettle,
+                    currentRound = BettingRound.PRE_FLOP,
+                    currentTurnPlayerId = firstTurn,
+                    roundContributions = emptyMap(),
+                    actedPlayerIds = emptySet(),
                     info = infoText
                 )
             }
@@ -509,49 +842,51 @@ class TableViewModel(
     }
 
     /**
-     * 玩家提交自己的本手投入（累加模式：每次提交叠加到本手总投入）
-     * 结算时由引擎统一从筹码扣除。
+     * 玩家提交自己的本轮投入（轮次制：仅在轮到自己时可操作）
      */
     fun submitMyContribution(amount: Int) {
         val state = _uiState.value
         val selfId = state.selfId
         if (selfId.isBlank()) return
 
-        val player = state.players.firstOrNull { it.id == selfId } ?: return
-
-        // 投入不能超过筹码
-        if (amount > player.chips) {
-            _uiState.update { it.copy(info = "投入不能超过筹码 (${player.chips})") }
-            return
-        }
-
-        // 盲注规则校验
-        if (state.blindsEnabled && state.players.size >= 2 && amount > 0) {
-            val minRequired = getMinContribution(selfId)
-            if (amount < minRequired) {
-                _uiState.update { it.copy(info = "投入不足: 最低需要 $minRequired") }
+        // 轮次制校验
+        if (state.gameStarted && state.currentRound != BettingRound.SHOWDOWN) {
+            if (state.currentTurnPlayerId != selfId) {
+                _uiState.update { it.copy(info = "还没轮到你") }
                 return
             }
         }
 
+        val player = state.players.firstOrNull { it.id == selfId } ?: return
+
+        // 计算本轮可用筹码
+        val totalPrev = state.contributionInputs[selfId]?.toIntOrNull() ?: 0
+        val currentRoundContrib = state.roundContributions[selfId] ?: 0
+        val maxAvailable = player.chips - totalPrev - currentRoundContrib
+
+        if (amount > maxAvailable) {
+            _uiState.update { it.copy(info = "投入超出可用筹码 (剩余: $maxAvailable)") }
+            return
+        }
+
+        // 跟注校验
+        val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
+        val callAmount = currentMaxBet - currentRoundContrib
+        val newRoundContrib = currentRoundContrib + amount
+        if (newRoundContrib < currentMaxBet && newRoundContrib < player.chips - totalPrev) {
+            _uiState.update { it.copy(info = "至少需要跟注 $callAmount") }
+            return
+        }
+
         if (state.mode == TableMode.HOST) {
-            _uiState.update {
-                val prev = it.contributionInputs[selfId]?.toIntOrNull() ?: 0
-                val total = prev + amount
-                it.copy(
-                    contributionInputs = it.contributionInputs + (selfId to total.toString()),
-                    info = "已投入: $total（本次+$amount）"
-                )
-            }
-            syncToClients()
+            processContribution(selfId, amount)
         } else if (state.mode == TableMode.CLIENT) {
             client.sendContribution(selfId, amount)
+            // 乐观更新
             _uiState.update {
-                val prev = it.contributionInputs[selfId]?.toIntOrNull() ?: 0
-                val total = prev + amount
                 it.copy(
-                    contributionInputs = it.contributionInputs + (selfId to total.toString()),
-                    info = "已投入: $total（本次+$amount）"
+                    roundContributions = it.roundContributions + (selfId to newRoundContrib),
+                    info = "已投入本轮: $newRoundContrib"
                 )
             }
         }
@@ -620,23 +955,21 @@ class TableViewModel(
         val selfId = state.selfId
         if (selfId.isBlank()) return
         if (state.foldedPlayerIds.contains(selfId)) return // 已弃牌
+        if (state.currentRound == BettingRound.SHOWDOWN) return // 摊牌阶段不可弃牌
+
+        // 仅在轮到自己时可弃牌
+        if (state.gameStarted && state.currentTurnPlayerId != selfId) {
+            _uiState.update { it.copy(info = "还没轮到你") }
+            return
+        }
 
         if (state.mode == TableMode.HOST) {
-            _uiState.update { s ->
-                s.copy(
-                    foldedPlayerIds = s.foldedPlayerIds + selfId,
-                    // 弃牌时将投入清零
-                    contributionInputs = s.contributionInputs + (selfId to "0"),
-                    info = "你已弃牌"
-                )
-            }
-            syncToClients()
+            processFold(selfId)
         } else {
             client.sendFold(selfId)
             _uiState.update { s ->
                 s.copy(
                     foldedPlayerIds = s.foldedPlayerIds + selfId,
-                    contributionInputs = s.contributionInputs + (selfId to "0"),
                     info = "你已弃牌"
                 )
             }
@@ -675,7 +1008,11 @@ class TableViewModel(
                     sidePotEnabled = state.sidePotEnabled,
                     selectedWinnerIds = state.selectedWinnerIds,
                     foldedPlayerIds = state.foldedPlayerIds,
-                    gameStarted = state.gameStarted
+                    gameStarted = state.gameStarted,
+                    currentRound = state.currentRound.name,
+                    currentTurnPlayerId = state.currentTurnPlayerId,
+                    roundContributions = state.roundContributions,
+                    actedPlayerIds = state.actedPlayerIds
                 )
             }
         }
@@ -699,6 +1036,10 @@ class TableViewModel(
             selectedWinnerIdsProvider = { _uiState.value.selectedWinnerIds },
             foldedPlayerIdsProvider = { _uiState.value.foldedPlayerIds },
             gameStartedProvider = { _uiState.value.gameStarted },
+            currentRoundProvider = { _uiState.value.currentRound.name },
+            currentTurnPlayerIdProvider = { _uiState.value.currentTurnPlayerId },
+            roundContributionsProvider = { _uiState.value.roundContributions },
+            actedPlayerIdsProvider = { _uiState.value.actedPlayerIds },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -745,16 +1086,7 @@ class TableViewModel(
                 syncToClients()
             }
             is LanTableServer.Event.ContributionReceived -> {
-                _uiState.update { state ->
-                    val prev = state.contributionInputs[event.playerId]?.toIntOrNull() ?: 0
-                    val total = prev + event.amount
-                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
-                    state.copy(
-                        contributionInputs = state.contributionInputs + (event.playerId to total.toString()),
-                        info = "$playerName 投入: $total（+${event.amount}）"
-                    )
-                }
-                syncToClients()
+                processContribution(event.playerId, event.amount)
             }
             is LanTableServer.Event.ReadyToggleReceived -> {
                 _uiState.update { state ->
@@ -782,15 +1114,7 @@ class TableViewModel(
                 syncToClients()
             }
             is LanTableServer.Event.FoldReceived -> {
-                _uiState.update { state ->
-                    val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                    state.copy(
-                        foldedPlayerIds = state.foldedPlayerIds + event.playerId,
-                        contributionInputs = state.contributionInputs + (event.playerId to "0"),
-                        info = "$playerName 已弃牌"
-                    )
-                }
-                syncToClients()
+                processFold(event.playerId)
             }
             else -> Unit
         }
@@ -805,6 +1129,7 @@ class TableViewModel(
             is LanTableClient.Event.StateSync -> {
                 _uiState.update {
                     val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
+                    val round = try { BettingRound.valueOf(event.currentRound) } catch (_: Exception) { BettingRound.PRE_FLOP }
                     it.copy(
                         screen = newScreen,
                         players = event.players,
@@ -817,6 +1142,10 @@ class TableViewModel(
                         selectedWinnerIds = event.selectedWinnerIds,
                         foldedPlayerIds = event.foldedPlayerIds,
                         gameStarted = event.gameStarted,
+                        currentRound = round,
+                        currentTurnPlayerId = event.currentTurnPlayerId,
+                        roundContributions = event.roundContributions,
+                        actedPlayerIds = event.actedPlayerIds,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
                 }
