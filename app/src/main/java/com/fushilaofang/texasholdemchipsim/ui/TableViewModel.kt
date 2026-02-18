@@ -69,8 +69,6 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
-    // --- 被房主踢出 ---
-    val kickedFromGame: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -78,6 +76,8 @@ data class TableUiState(
     // --- 房间发现 ---
     val isScanning: Boolean = false,
     val discoveredRooms: List<DiscoveredRoom> = emptyList(),
+    // --- 被踢出提示 ---
+    val kickedMessage: String? = null,
     // --- 用户设置（持久化） ---
     val savedPlayerName: String = "",
     val savedRoomName: String = "家庭牌局",
@@ -148,6 +148,9 @@ class TableViewModel(
         _uiState.update { it.copy(screen = screen) }
     }
 
+    fun dismissKicked() {
+        _uiState.update { it.copy(kickedMessage = null) }
+    }
     fun goHome() {
         // 保存会话信息以便后续重连
         val prevMode = _uiState.value.mode
@@ -177,37 +180,6 @@ class TableViewModel(
                 info = "准备开始"
             )
         }
-    }
-
-    /** 被房主踢出：清除 session、禁止重连、跳回主页并标记 kickedFromGame */
-    fun beKickedGoHome() {
-        clearSession()
-        releaseWakeLock()
-        roomAdvertiser.stopBroadcast()
-        roomScanner.stopScan()
-        server.stop()
-        client.disconnect()
-        _uiState.update {
-            it.copy(
-                mode = TableMode.IDLE,
-                screen = ScreenState.HOME,
-                players = emptyList(),
-                gameStarted = false,
-                selfId = "",
-                isScanning = false,
-                discoveredRooms = emptyList(),
-                disconnectedPlayerIds = emptySet(),
-                waitingForHostReconnect = false,
-                canRejoin = false,
-                kickedFromGame = true,
-                info = "准备开始"
-            )
-        }
-    }
-
-    /** 用户已阅读被踢提示，清除标记 */
-    fun acknowledgeKick() {
-        _uiState.update { it.copy(kickedFromGame = false) }
     }
 
     fun saveBuyIn(value: Int) {
@@ -777,7 +749,27 @@ class TableViewModel(
                 _uiState.update { it.copy(waitingForHostReconnect = false, info = event.reason) }
             }
             is LanTableClient.Event.Kicked -> {
-                beKickedGoHome()
+                // 被房主踢出：清除会话，回到主界面并显示提示
+                releaseWakeLock()
+                roomScanner.stopScan()
+                client.disconnect()
+                clearSession()
+                _uiState.update {
+                    it.copy(
+                        mode = TableMode.IDLE,
+                        screen = ScreenState.HOME,
+                        players = emptyList(),
+                        gameStarted = false,
+                        selfId = "",
+                        isScanning = false,
+                        discoveredRooms = emptyList(),
+                        disconnectedPlayerIds = emptySet(),
+                        waitingForHostReconnect = false,
+                        canRejoin = false,
+                        kickedMessage = "你已被房主移出本局游戏",
+                        info = "准备开始"
+                    )
+                }
             }
         }
     }

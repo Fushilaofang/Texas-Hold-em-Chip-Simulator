@@ -83,7 +83,7 @@ sealed class NetworkMessage {
         val playerId: String
     ) : NetworkMessage()
 
-    /** 房主主动踢出玩家（服务端 → 被踢客户端） */
+    /** 房主踢出玩家通知（服务端 → 客户端） */
     @Serializable
     @SerialName("kicked")
     data object Kicked : NetworkMessage()

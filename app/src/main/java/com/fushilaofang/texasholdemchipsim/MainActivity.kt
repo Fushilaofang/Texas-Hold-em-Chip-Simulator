@@ -117,20 +117,6 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // 被房主踢出弹窗
-                if (state.kickedFromGame) {
-                    androidx.compose.material3.AlertDialog(
-                        onDismissRequest = { /* 不允许点击外部关闭 */ },
-                        title = { Text("已被移出游戏", fontWeight = FontWeight.Bold) },
-                        text = { Text("您已被房主移出本局游戏。") },
-                        confirmButton = {
-                            Button(onClick = { vm.acknowledgeKick() }) {
-                                Text("确定")
-                            }
-                        }
-                    )
-                }
-
                 // 等待房主重连弹窗
                 if (state.waitingForHostReconnect) {
                     androidx.compose.material3.AlertDialog(
@@ -149,6 +135,21 @@ class MainActivity : ComponentActivity() {
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
                             ) {
                                 Text("退出房间")
+                            }
+                        }
+                    )
+                }
+
+                // 被房主移出弹窗
+                val kickedMsg = state.kickedMessage
+                if (kickedMsg != null) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { vm.dismissKicked() },
+                        title = { Text("已被移出", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
+                        text = { Text(kickedMsg, fontSize = 15.sp) },
+                        confirmButton = {
+                            Button(onClick = { vm.dismissKicked() }) {
+                                Text("知道了")
                             }
                         }
                     )
