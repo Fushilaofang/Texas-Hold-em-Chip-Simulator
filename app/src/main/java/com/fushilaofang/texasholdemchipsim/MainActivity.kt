@@ -20,6 +20,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,8 +70,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -1531,6 +1535,7 @@ private fun CropImageDialog(
 
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
+    var userScale by remember { mutableFloatStateOf(1f) }
     var containerPx by remember { mutableFloatStateOf(0f) }
 
     Dialog(onDismissRequest = onCancel) {
@@ -1545,7 +1550,7 @@ private fun CropImageDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("裁切头像", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text("拖拽图片调整位置", fontSize = 12.sp, color = Color.Gray)
+                Text("拖拽调整位置，双指缩放", fontSize = 12.sp, color = Color.Gray)
 
                 Box(
                     modifier = Modifier
@@ -1556,28 +1561,38 @@ private fun CropImageDialog(
                             containerPx = coords.size.width.toFloat()
                         }
                         .pointerInput(Unit) {
-                            detectDragGestures { _, dragAmount ->
-                                if (containerPx <= 0f) return@detectDragGestures
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                if (containerPx <= 0f) return@detectTransformGestures
                                 val imgW = originalBitmap.width.toFloat()
                                 val imgH = originalBitmap.height.toFloat()
-                                val scale = maxOf(containerPx / imgW, containerPx / imgH)
-                                val scaledW = imgW * scale
-                                val scaledH = imgH * scale
+                                val baseScale = maxOf(containerPx / imgW, containerPx / imgH)
+                                val newUserScale = (userScale * zoom).coerceIn(1f, 6f)
+                                val totalScale = baseScale * newUserScale
+                                val scaledW = imgW * totalScale
+                                val scaledH = imgH * totalScale
                                 val cropR = containerPx * 0.43f
                                 val maxPanX = ((scaledW / 2f) - cropR).coerceAtLeast(0f)
                                 val maxPanY = ((scaledH / 2f) - cropR).coerceAtLeast(0f)
-                                panX = (panX + dragAmount.x).coerceIn(-maxPanX, maxPanX)
-                                panY = (panY + dragAmount.y).coerceIn(-maxPanY, maxPanY)
+                                panX = (panX + pan.x).coerceIn(-maxPanX, maxPanX)
+                                panY = (panY + pan.y).coerceIn(-maxPanY, maxPanY)
+                                userScale = newUserScale
                             }
                         }
                 ) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
+                    // 关键修复：Offscreen 离屏合成，使 BlendMode.Clear 只清除当前层
+                    // 而不会透视到背后的 UI（主界面）
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    ) {
                         if (containerPx <= 0f) return@Canvas
                         val imgW = originalBitmap.width.toFloat()
                         val imgH = originalBitmap.height.toFloat()
-                        val scale = maxOf(size.width / imgW, size.height / imgH)
-                        val scaledW = imgW * scale
-                        val scaledH = imgH * scale
+                        val baseScale = maxOf(size.width / imgW, size.height / imgH)
+                        val totalScale = baseScale * userScale
+                        val scaledW = imgW * totalScale
+                        val scaledH = imgH * totalScale
                         val left = (size.width - scaledW) / 2f + panX
                         val top = (size.height - scaledH) / 2f + panY
                         // 绘制图片
@@ -1593,12 +1608,14 @@ private fun CropImageDialog(
                         val center = Offset(size.width / 2f, size.height / 2f)
                         val cropR = size.width * 0.43f
                         drawRect(color = Color.Black.copy(alpha = 0.55f))
+                        // BlendMode.Clear 清除圆形内的暗化层，露出下方图片
                         drawCircle(
-                            color = Color.Transparent,
+                            color = Color.Black,
                             radius = cropR,
                             center = center,
                             blendMode = BlendMode.Clear
                         )
+                        // 白色圆形边框
                         drawCircle(
                             color = Color.White,
                             radius = cropR,
@@ -1620,11 +1637,12 @@ private fun CropImageDialog(
                             val cPx = if (containerPx > 0f) containerPx else 840f
                             val imgW = originalBitmap.width.toFloat()
                             val imgH = originalBitmap.height.toFloat()
-                            val scale = maxOf(cPx / imgW, cPx / imgH)
+                            val baseScale = maxOf(cPx / imgW, cPx / imgH)
+                            val totalScale = baseScale * userScale
                             val cropR = cPx * 0.43f
-                            val cx = imgW / 2f - panX / scale
-                            val cy = imgH / 2f - panY / scale
-                            val rImg = cropR / scale
+                            val cx = imgW / 2f - panX / totalScale
+                            val cy = imgH / 2f - panY / totalScale
+                            val rImg = cropR / totalScale
                             val left = (cx - rImg).toInt().coerceAtLeast(0)
                             val top = (cy - rImg).toInt().coerceAtLeast(0)
                             val side = (rImg * 2).toInt()
