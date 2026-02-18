@@ -104,7 +104,8 @@ class MainActivity : ComponentActivity() {
                         onToggleReady = vm::toggleReady,
                         onStartGame = vm::startGame,
                         onLeave = vm::goHome,
-                        onToggleBlinds = vm::toggleBlinds
+                        onToggleBlinds = vm::toggleBlinds,
+                        onToggleSidePot = vm::toggleSidePot
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -113,6 +114,7 @@ class MainActivity : ComponentActivity() {
                         onSettleAndAdvance = vm::settleAndAdvance,
                         onReset = vm::resetTable,
                         onToggleBlinds = vm::toggleBlinds,
+                        onToggleSidePot = vm::toggleSidePot,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -413,7 +415,8 @@ private fun LobbyScreen(
     onToggleReady: () -> Unit,
     onStartGame: () -> Unit,
     onLeave: () -> Unit,
-    onToggleBlinds: (Boolean) -> Unit
+    onToggleBlinds: (Boolean) -> Unit,
+    onToggleSidePot: (Boolean) -> Unit
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
@@ -444,14 +447,20 @@ private fun LobbyScreen(
                 if (state.blindsEnabled) {
                     Text("小盲/大盲: ${state.blindsState.config.smallBlind} / ${state.blindsState.config.bigBlind}", fontSize = 13.sp)
                 }
+                Text("边池规则: ${if (state.sidePotEnabled) "开启" else "关闭"}", fontSize = 13.sp)
             }
         }
 
-        // 房主盲注开关
+        // 房主开关
         if (state.mode == TableMode.HOST) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("盲注自动轮转", fontSize = 13.sp)
                 Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("边池规则", fontSize = 13.sp)
+                Switch(checked = state.sidePotEnabled, onCheckedChange = onToggleSidePot)
+                Text(if (state.sidePotEnabled) "开启" else "关闭", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
@@ -545,6 +554,7 @@ private fun GameScreen(
     onSettleAndAdvance: () -> Unit,
     onReset: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
+    onToggleSidePot: (Boolean) -> Unit,
     getMinContribution: (String) -> Int,
     onLeave: () -> Unit
 ) {
@@ -629,6 +639,29 @@ private fun GameScreen(
                                         checked = state.blindsEnabled,
                                         onCheckedChange = {
                                             onToggleBlinds(it)
+                                            showMenu = false
+                                        },
+                                        modifier = Modifier.height(28.dp)
+                                    )
+                                }
+                            },
+                            onClick = {}
+                        )
+                        HorizontalDivider()
+                    }
+                    if (state.mode == TableMode.HOST) {
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("边池规则", modifier = Modifier.weight(1f))
+                                    Switch(
+                                        checked = state.sidePotEnabled,
+                                        onCheckedChange = {
+                                            onToggleSidePot(it)
                                             showMenu = false
                                         },
                                         modifier = Modifier.height(28.dp)

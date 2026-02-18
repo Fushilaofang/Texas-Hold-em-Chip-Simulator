@@ -30,6 +30,7 @@ sealed class NetworkMessage {
         val contributions: Map<String, Int> = emptyMap(),
         val blindsState: BlindsState = BlindsState(),
         val blindsEnabled: Boolean = true,
+        val sidePotEnabled: Boolean = true,
         val gameStarted: Boolean = false
     ) : NetworkMessage()
 

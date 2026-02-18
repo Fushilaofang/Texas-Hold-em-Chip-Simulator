@@ -62,6 +62,7 @@ data class TableUiState(
     // --- 盲注 ---
     val blindsState: BlindsState = BlindsState(),
     val blindsEnabled: Boolean = true,
+    val sidePotEnabled: Boolean = true,
     val blindContributions: Map<String, Int> = emptyMap(),
     // --- 边池 ---
     val lastSidePots: List<SidePot> = emptyList(),
@@ -296,6 +297,13 @@ class TableViewModel(
         }
     }
 
+    fun toggleSidePot(enabled: Boolean) {
+        _uiState.update { it.copy(sidePotEnabled = enabled) }
+        if (_uiState.value.mode == TableMode.HOST) {
+            syncToClients()
+        }
+    }
+
     // ==================== 准备 / 开始游戏 ====================
 
     /** 非房主玩家切换准备状态 */
@@ -399,21 +407,29 @@ class TableViewModel(
                 player.id to (raw.toIntOrNull() ?: 0)
             }
 
+            // 边池关闭时：将所有有投入玩家的金额统一设为最大值，使结算引擎只生成单一主池
+            val effectiveContributions = if (!state.sidePotEnabled) {
+                val maxContrib = contributions.values.maxOrNull() ?: 0
+                contributions.mapValues { (_, v) -> if (v > 0) maxContrib else 0 }
+            } else {
+                contributions
+            }
+
             val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
             val result = settlementEngine.settleHandSimple(
                 handId = handId,
                 players = state.players,
-                contributions = contributions,
+                contributions = effectiveContributions,
                 winnerIds = state.selectedWinnerIds.toList(),
                 timestamp = now
             )
 
             playersAfterSettle = result.updatedPlayers
             logsAfterSettle = (state.logs + result.transactions).takeLast(500)
-            sidePots = result.sidePots
-            settleInfo = if (result.sidePots.size > 1) {
+            sidePots = if (state.sidePotEnabled) result.sidePots else result.sidePots.take(1)
+            settleInfo = if (state.sidePotEnabled && result.sidePots.size > 1) {
                 result.sidePots.joinToString(" | ") { "${it.label}:${it.amount}" }
             } else {
                 "底池 ${result.totalPot}"
@@ -594,6 +610,7 @@ class TableViewModel(
                     contributions = contribs,
                     blindsState = state.blindsState,
                     blindsEnabled = state.blindsEnabled,
+                    sidePotEnabled = state.sidePotEnabled,
                     gameStarted = state.gameStarted
                 )
             }
@@ -705,6 +722,7 @@ class TableViewModel(
                         contributionInputs = event.contributions.mapValues { (_, v) -> v.toString() },
                         blindsState = event.blindsState,
                         blindsEnabled = event.blindsEnabled,
+                        sidePotEnabled = event.sidePotEnabled,
                         gameStarted = event.gameStarted,
                         info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
                     )
@@ -743,6 +761,7 @@ class TableViewModel(
             putBoolean("session_game_started", state.gameStarted)
             putInt("session_hand_counter", state.handCounter)
             putBoolean("session_blinds_enabled", state.blindsEnabled)
+            putBoolean("session_side_pot_enabled", state.sidePotEnabled)
             putString("session_players", sessionJson.encodeToString(state.players))
             putString("session_blinds_state", sessionJson.encodeToString(state.blindsState))
             putString("session_contributions", sessionJson.encodeToString(state.contributionInputs))
@@ -755,7 +774,7 @@ class TableViewModel(
         val keys = listOf(
             "session_mode", "session_self_id", "session_self_name", "session_table_name",
             "session_host_ip", "session_game_started", "session_hand_counter",
-            "session_blinds_enabled", "session_players", "session_blinds_state",
+            "session_blinds_enabled", "session_side_pot_enabled", "session_players", "session_blinds_state",
             "session_contributions", "session_blind_contribs"
         )
         prefs.edit().apply {
@@ -786,6 +805,7 @@ class TableViewModel(
         val gameStarted = prefs.getBoolean("session_game_started", false)
         val handCounter = prefs.getInt("session_hand_counter", 1)
         val blindsEnabled = prefs.getBoolean("session_blinds_enabled", true)
+        val sidePotEnabled = prefs.getBoolean("session_side_pot_enabled", true)
 
         val players: List<PlayerState> = try {
             val s = prefs.getString("session_players", "[]") ?: "[]"
@@ -821,6 +841,7 @@ class TableViewModel(
                     gameStarted = gameStarted,
                     blindsState = blindsState,
                     blindsEnabled = blindsEnabled,
+                    sidePotEnabled = sidePotEnabled,
                     contributionInputs = contributions,
                     blindContributions = blindContributions,
                     selectedWinnerIds = emptySet(),
@@ -857,6 +878,7 @@ class TableViewModel(
                     gameStarted = gameStarted,
                     blindsState = blindsState,
                     blindsEnabled = blindsEnabled,
+                    sidePotEnabled = sidePotEnabled,
                     contributionInputs = contributions,
                     canRejoin = false,
                     info = "正在重连到「$tableName」..."

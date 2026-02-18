@@ -151,6 +151,7 @@ class LanTableServer(
         contributions: Map<String, Int> = emptyMap(),
         blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
         blindsEnabled: Boolean = true,
+        sidePotEnabled: Boolean = true,
         gameStarted: Boolean = false
     ) {
         val message = NetworkMessage.StateSync(
@@ -160,6 +161,7 @@ class LanTableServer(
             contributions = contributions,
             blindsState = blindsState,
             blindsEnabled = blindsEnabled,
+            sidePotEnabled = sidePotEnabled,
             gameStarted = gameStarted
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
@@ -408,6 +410,7 @@ class LanTableClient(
             val contributions: Map<String, Int> = emptyMap(),
             val blindsState: com.fushilaofang.texasholdemchipsim.blinds.BlindsState = com.fushilaofang.texasholdemchipsim.blinds.BlindsState(),
             val blindsEnabled: Boolean = true,
+            val sidePotEnabled: Boolean = true,
             val gameStarted: Boolean = false
         ) : Event()
 
@@ -509,6 +512,7 @@ class LanTableClient(
                                     contributions = msg.contributions,
                                     blindsState = msg.blindsState,
                                     blindsEnabled = msg.blindsEnabled,
+                                    sidePotEnabled = msg.sidePotEnabled,
                                     gameStarted = msg.gameStarted
                                 )
                             )
