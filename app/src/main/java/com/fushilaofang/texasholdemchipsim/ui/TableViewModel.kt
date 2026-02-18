@@ -621,6 +621,32 @@ class TableViewModel(
         _uiState.update { it.copy(initialDealerIndex = playerIndex) }
     }
 
+    /**
+     * 游戏中修改庄家（手间空档期可调用）
+     * 重新计算 SB/BB 位并同步客户端
+     */
+    fun setDealerInGame(playerIndex: Int) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val newBlinds = if (state.blindsEnabled) {
+            blindsManager.computeFromDealerSkippingBroke(playerIndex, state.players, state.blindsState.config)
+        } else {
+            blindsManager.computeFromDealer(playerIndex, state.players.size, state.blindsState.config)
+        }
+        // 重新计算盲注预填（盲注已在手开始时扣除，此处只更新显示位置和 roundContributions）
+        val blindPrefills = if (state.blindsEnabled) {
+            blindsManager.calculateBlindPrefills(state.players, newBlinds)
+        } else emptyMap()
+        _uiState.update {
+            it.copy(
+                blindsState = newBlinds,
+                blindContributions = blindPrefills,
+                roundContributions = if (state.blindsEnabled) blindPrefills else emptyMap()
+            )
+        }
+        syncToClients()
+    }
+
     // ==================== 开始游戏 / 结算 ====================
 
     /** 房主点击"开始游戏" */

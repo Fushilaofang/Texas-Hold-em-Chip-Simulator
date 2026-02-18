@@ -123,6 +123,7 @@ class MainActivity : ComponentActivity() {
                         onToggleSidePot = vm::toggleSidePot,
                         onUpdateBlindsConfig = vm::updateBlindsConfig,
                         onMovePlayer = vm::movePlayer,
+                        onSetDealer = vm::setDealerInGame,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -643,6 +644,7 @@ private fun GameScreen(
     onToggleSidePot: (Boolean) -> Unit,
     onUpdateBlindsConfig: (Int, Int) -> Unit,
     onMovePlayer: (String, Int) -> Unit,
+    onSetDealer: (Int) -> Unit,
     getMinContribution: (String) -> Int,
     onLeave: () -> Unit
 ) {
@@ -682,36 +684,56 @@ private fun GameScreen(
     if (showReorderPanel && state.mode == TableMode.HOST) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showReorderPanel = false },
-            title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
+            title = { Text("调整顺序 / 选庄", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("拖动 ▲▼ 调整座位顺序，下一手生效", fontSize = 12.sp, color = Color.Gray)
+                    Text("▲▼ 调整座位顺序・点击[设为庄]指定庄家", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
                     reorderPlayers.forEachIndexed { seatIdx, player ->
+                        val isDealer = seatIdx == state.blindsState.dealerIndex
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(
-                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    color = if (isDealer) Color(0xFFFFF8E1) else MaterialTheme.colorScheme.surfaceVariant,
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                                 )
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(
-                                "${seatIdx + 1}.",
-                                fontSize = 13.sp,
-                                color = Color.Gray,
-                                modifier = Modifier.widthIn(min = 20.dp)
-                            )
+                            // 庄家标记
+                            if (isDealer) {
+                                Text(
+                                    "[庄]",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFE65100),
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
+                            } else {
+                                Text(
+                                    "${seatIdx + 1}.",
+                                    fontSize = 13.sp,
+                                    color = Color.Gray,
+                                    modifier = Modifier.widthIn(min = 28.dp)
+                                )
+                            }
                             Text(
                                 player.name,
                                 modifier = Modifier.weight(1f),
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
-                            Text("${player.chips}", fontSize = 12.sp, color = Color.Gray)
+                            // 设为庄按钮
+                            if (!isDealer) {
+                                OutlinedButton(
+                                    onClick = { onSetDealer(seatIdx) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) { Text("设庄", fontSize = 11.sp) }
+                            }
+                            // 上下移动按钮
                             Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                 OutlinedButton(
                                     onClick = {
