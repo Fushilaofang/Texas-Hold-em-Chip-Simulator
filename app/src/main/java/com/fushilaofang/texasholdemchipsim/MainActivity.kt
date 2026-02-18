@@ -1307,9 +1307,10 @@ private fun GameScreen(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
+                // 保证 tableW > tableH，圆槽形在竖屏下也正确
                 val tableW = size.width * 0.86f
-                val tableH = size.height * 0.68f
-                val cornerR = tableH / 2f  // 圆槽形：半径 = 短边/2，两端为半圆
+                val tableH = minOf(size.height * 0.64f, tableW * 0.52f)
+                val cornerR = tableH / 2f
 
                 // 用 Path 绘制圆槽形（Stadium/Track 形状）
                 fun stadiumPath(left: Float, top: Float, w: Float, h: Float): Path {
@@ -1480,8 +1481,11 @@ private fun GameScreen(
                 val areaH = constraints.maxHeight.toFloat()
                 val cx = areaW / 2f
                 val cy = areaH / 2f
-                val radiusX = areaW * 0.42f
-                val radiusY = areaH * 0.40f
+                // 玩家排列半径与牌桌尺寸一致，避免竖屏时超出桌面
+                val tableW = areaW * 0.86f
+                val tableH = minOf(areaH * 0.64f, tableW * 0.52f)
+                val radiusX = tableW / 2f * 0.96f
+                val radiusY = tableH / 2f * 1.35f  // 玩家卡片沿桌边外侧排列
 
                 // 计算每位玩家的角度位置（从底部正中开始，顺时针）
                 sortedPlayers.forEachIndexed { index, player ->
