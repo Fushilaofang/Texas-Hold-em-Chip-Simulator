@@ -1308,8 +1308,8 @@ private fun GameScreen(
                 val cx = size.width / 2f
                 val cy = size.height / 2f
                 // 竖向圆槽形：限制最大高度，确保桌体完整显示在画布内
-                val tableH = minOf(size.height * 0.60f, size.width * 1.2f)
-                val tableW = minOf(size.width * 0.52f, tableH * 0.52f)
+                val tableH = minOf(size.height * 0.78f, size.width * 1.55f)
+                val tableW = minOf(size.width * 0.64f, tableH * 0.52f)
                 val cornerR = tableW / 2f
 
                 // 竖向胶囊形（Vertical Capsule）：高 > 宽，上下各一个半圆
@@ -1487,67 +1487,96 @@ private fun GameScreen(
                 val cx = areaW / 2f
                 val cy = areaH / 2f
                 // 与牌桌绘制保持相同的尺寸参数
-                val tableH = minOf(areaH * 0.60f, areaW * 1.2f)
-                val tableW = minOf(areaW * 0.52f, tableH * 0.52f)
-                // outerPad = 0：卡片中心落在牌桌桌沿上，卡片骑在边缘（一半在桌内一半在桌外）
-                val outerPad = 0f
+                val tableH = minOf(areaH * 0.78f, areaW * 1.55f)
+                val tableW = minOf(areaW * 0.64f, tableH * 0.52f)
+                val R = tableW / 2f
+                val straight = (tableH - tableW).coerceAtLeast(0f)
+                val tcy = cy - tableH / 2f + R   // 顶部半圆圆心 Y
+                val bcy = cy + tableH / 2f - R   // 底部半圆圆心 Y
 
-                // 在圆槽形（Stadium）外轮廓上按弧长均匀分布的位置计算函数
-                // t ∈ [0,1)，从底部正中开始，顺时针方向
-                fun posOnStadium(t: Float): Pair<Float, Float> {
-                    val r = tableW / 2f
-                    val R = r + outerPad          // 外轨道圆端半径
-                    val straight = (tableH - tableW).coerceAtLeast(0f)  // 直边长度
-                    val semiArc = Math.PI.toFloat() * R                  // 半圆弧长
-                    val totalPerim = 2f * semiArc + 2f * straight
+                // ── 单侧路径弧长：底部右1/4圆 + 右直边 + 顶部右1/4圆 ──────
+                // 同理左侧对称，总长相同 = π*R/2 + straight + π*R/2 = π*R + straight
+                val quarterArc = (Math.PI * R / 2).toFloat()
+                val sideLen = 2f * quarterArc + straight   // 单侧总弧长
 
-                    val dist = ((t % 1f + 1f) % 1f) * totalPerim        // 从底部中心的弧长距离
-
-                    val bcy = cy + tableH / 2f - r   // 底部半圆圆心 Y
-                    val tcy = cy - tableH / 2f + r   // 顶部半圆圆心 Y
-
-                    // 各段累计弧长边界
-                    val d1 = semiArc / 2f            // 底部右半圆 (90°→0°)
-                    val d2 = d1 + straight            // 右侧直边 (上行)
-                    val d3 = d2 + semiArc             // 顶部半圆 (0°→-180°，经过顶端)
-                    val d4 = d3 + straight            // 左侧直边 (下行)
-                    // d4 + semiArc/2 = totalPerim   底部左半圆 (180°→90°)
-
+                // 右侧路径上距离 d（从底部中心出发，顺时针）处的坐标
+                fun rightSidePos(d: Float): Pair<Float, Float> {
                     return when {
-                        dist <= d1 -> {
-                            // 底部右半圆：角度从 90° 降至 0°
-                            val a = (Math.PI / 2.0 * (1.0 - dist / d1)).toFloat()
+                        d <= quarterArc -> {
+                            // 底部右 1/4 圆：角度从 90° → 0°
+                            val a = (Math.PI / 2.0 * (1.0 - d / quarterArc)).toFloat()
                             Pair(cx + R * kotlin.math.cos(a), bcy + R * kotlin.math.sin(a))
                         }
-                        dist <= d2 -> {
+                        d <= quarterArc + straight -> {
                             // 右侧直边：从 (cx+R, bcy) 向上到 (cx+R, tcy)
-                            val frac = (dist - d1) / straight
+                            val frac = (d - quarterArc) / straight
                             Pair(cx + R, bcy - frac * straight)
                         }
-                        dist <= d3 -> {
-                            // 顶部半圆：角度从 0° 降至 -180°（经过顶端）
-                            val frac = (dist - d2) / semiArc
-                            val a = -(Math.PI.toFloat() * frac)
+                        else -> {
+                            // 顶部右 1/4 圆：角度从 0° → -90°
+                            val frac = (d - quarterArc - straight) / quarterArc
+                            val a = -(Math.PI / 2.0 * frac).toFloat()
                             Pair(cx + R * kotlin.math.cos(a), tcy + R * kotlin.math.sin(a))
                         }
-                        dist <= d4 -> {
+                    }
+                }
+
+                // 左侧路径上距离 d（从顶部中心出发，顺时针）处的坐标
+                fun leftSidePos(d: Float): Pair<Float, Float> {
+                    return when {
+                        d <= quarterArc -> {
+                            // 顶部左 1/4 圆：角度从 -90°（顶） → -180°（左）
+                            val frac = d / quarterArc
+                            val a = (-Math.PI / 2.0 - Math.PI / 2.0 * frac).toFloat()
+                            Pair(cx + R * kotlin.math.cos(a), tcy + R * kotlin.math.sin(a))
+                        }
+                        d <= quarterArc + straight -> {
                             // 左侧直边：从 (cx-R, tcy) 向下到 (cx-R, bcy)
-                            val frac = (dist - d3) / straight
+                            val frac = (d - quarterArc) / straight
                             Pair(cx - R, tcy + frac * straight)
                         }
                         else -> {
-                            // 底部左半圆：角度从 180° 降至 90°
-                            val frac = (dist - d4) / (semiArc / 2f)
-                            val a = (Math.PI * (1.0 - frac * 0.5)).toFloat()
+                            // 底部左 1/4 圆：角度从 180° → 90°（底）
+                            val frac = (d - quarterArc - straight) / quarterArc
+                            val a = (Math.PI - Math.PI / 2.0 * frac).toFloat()
                             Pair(cx + R * kotlin.math.cos(a), bcy + R * kotlin.math.sin(a))
                         }
                     }
                 }
 
-                // 计算每位玩家的位置（从底部正中开始，顺时针均匀分布）
+                // ── 10 个固定席位 ─────────────────────────────────────────────
+                // 席位 0  : 正下方
+                // 席位 1-4: 右侧路径五等分的 4 个中间点（从底→顶）
+                // 席位 5  : 正上方
+                // 席位 6-9: 左侧路径五等分的 4 个中间点（从顶→底）
+                val step = sideLen / 5f
+                val allSeats: List<Pair<Float, Float>> = buildList {
+                    add(Pair(cx, bcy + R))                          // 0 正下
+                    for (k in 1..4) add(rightSidePos(k * step))     // 1-4 右侧
+                    add(Pair(cx, tcy - R))                          // 5 正上
+                    for (k in 1..4) add(leftSidePos(k * step))      // 6-9 左侧
+                }
+
+                // ── 按人数对称选座映射表 ──────────────────────────────────────
+                val seatMap: Map<Int, List<Int>> = mapOf(
+                    1  to listOf(0),
+                    2  to listOf(0, 5),
+                    3  to listOf(0, 4, 6),
+                    4  to listOf(0, 3, 5, 7),
+                    5  to listOf(0, 3, 4, 6, 7),
+                    6  to listOf(0, 3, 4, 5, 6, 7),
+                    7  to listOf(0, 2, 3, 4, 6, 7, 8),
+                    8  to listOf(0, 2, 3, 4, 5, 6, 7, 8),
+                    9  to listOf(0, 1, 2, 3, 4, 6, 7, 8, 9),
+                    10 to listOf(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+                )
+                val selectedSeats = seatMap[playerCount.coerceIn(1, 10)]
+                    ?: (0 until playerCount).map { it % 10 }
+
+                // 计算每位玩家的固定席位坐标
                 sortedPlayers.forEachIndexed { index, player ->
-                    val t = index.toFloat() / playerCount
-                    val (px, py) = posOnStadium(t)
+                    val seatIndex = selectedSeats.getOrElse(index) { index % 10 }
+                    val (px, py) = allSeats[seatIndex]
 
                     // 密度转换
                     val density = LocalDensity.current
