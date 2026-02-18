@@ -738,7 +738,8 @@ class TableViewModel(
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Kicked -> {
-                client.disconnect()
+                // 不在这里调用 client.disconnect()，因为当前在 listenJob 协程内部执行
+                // 连接会在 doConnect 的 finally 块中自动清理
                 releaseWakeLock()
                 clearSession()
                 _uiState.update {
