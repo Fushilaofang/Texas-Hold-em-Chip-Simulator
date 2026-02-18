@@ -896,20 +896,10 @@ class TableViewModel(
                 player.id to (raw.toIntOrNull() ?: 0)
             }
 
-            // 边池关闭时：将所有有投入玩家的金额统一设为最大值
-            val effectiveContributions = if (!state.sidePotEnabled) {
-                val maxContrib = contributions.values.maxOrNull() ?: 0
-                contributions.mapValues { (_, v) -> if (v > 0) maxContrib else 0 }
-            } else {
-                contributions
-            }
-
             val handId = "第${state.handCounter}手"
             val now = System.currentTimeMillis()
 
-            // 还原所有手牌过程中实际扣除的筹码（必须用 contributions 而非 effectiveContributions）
-            // effectiveContributions 在 sidePotEnabled=false 时会把所有人调为最大值，
-            // 但实际扣除的筹码是 contributions，两者必须分离。
+            // 还原所有手牌过程中实际扣除的筹码，以便结算引擎重新分配
             val playersForSettlement = state.players.map { player ->
                 val actualContrib = contributions[player.id] ?: 0
                 player.copy(chips = player.chips + actualContrib)
@@ -918,13 +908,28 @@ class TableViewModel(
             val result = settlementEngine.settleHandSimple(
                 handId = handId,
                 players = playersForSettlement,
-                contributions = effectiveContributions,
+                contributions = contributions,
                 winnerIds = state.selectedWinnerIds.toList(),
                 timestamp = now
             )
 
+            // CONTRIBUTION 日志去除盲注部分，避免与 BLIND_DEDUCTION 重复计算
+            // 盲注已在本手开始时由 BLIND_DEDUCTION 单独记录，此处仅展示额外投注
+            val blindContribMap = state.blindContributions
+            val adjustedTransactions = result.transactions.mapNotNull { tx ->
+                if (tx.type == TransactionType.CONTRIBUTION) {
+                    val blindPortion = blindContribMap[tx.playerId] ?: 0
+                    val extraAmount = tx.amount + blindPortion  // amount 为负，blindPortion 为正
+                    when {
+                        extraAmount == 0 -> null  // 投入全部来自盲注，已在 BLIND_DEDUCTION 记录，无须重复
+                        blindPortion > 0 -> tx.copy(amount = extraAmount, note = "追加投注")
+                        else -> tx
+                    }
+                } else tx
+            }
+
             playersAfterSettle = result.updatedPlayers
-            logsAfterSettle = (state.logs + result.transactions).takeLast(500)
+            logsAfterSettle = (state.logs + adjustedTransactions).takeLast(500)
             sidePots = if (state.sidePotEnabled) result.sidePots else result.sidePots.take(1)
             settleInfo = if (state.sidePotEnabled && result.sidePots.size > 1) {
                 result.sidePots.joinToString(" | ") { "${it.label}:${it.amount}" }

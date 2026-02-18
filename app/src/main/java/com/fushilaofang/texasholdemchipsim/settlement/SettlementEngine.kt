@@ -68,11 +68,11 @@ class SettlementEngine {
             }
         }
 
-        // 更新玩家筹码
+        // 更新玩家筹码（coerceAtLeast 防止极端情况出现负值）
         val updatedPlayers = players.map { player ->
             val spent = normalizedContrib[player.id] ?: 0
             val won = payouts[player.id] ?: 0
-            player.copy(chips = player.chips - spent + won)
+            player.copy(chips = (player.chips - spent + won).coerceAtLeast(0))
         }
 
         // 生成交易记录
