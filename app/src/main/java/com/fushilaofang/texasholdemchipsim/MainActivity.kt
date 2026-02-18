@@ -1622,18 +1622,19 @@ private fun GameScreen(
                             .padding(2.dp)
                     ) {
                         Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                            horizontalAlignment = Alignment.Start,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             // 上方：角色标签（庄/盲注/状态）——始终占 22dp 高度保证胶囊居中对齐
-                            // 水平对齐：左对齐贴近直边端点（Start）
+                            // 水平对齐：padding(start=25dp) 使最左标签对齐胶囊直边左侧端点
+                            // 胶囊高50dp，端半圆半径=25dp，标签从25dp处开始
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(tagRowHeightDp)
-                                    .padding(bottom = 2.dp),
+                                    .padding(start = 25.dp, bottom = 2.dp),
                             ) {
                                 if (roleTag.isNotEmpty() || isFolded || isWinner || isOffline) {
                                     roleTags.forEach { tag ->
@@ -1702,6 +1703,7 @@ private fun GameScreen(
                             }
                             Row(
                                 modifier = Modifier
+                                    .fillMaxWidth()
                                     .background(
                                         color = capsuleColor,
                                         shape = RoundedCornerShape(50)
