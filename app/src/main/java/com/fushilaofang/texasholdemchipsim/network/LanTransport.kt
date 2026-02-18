@@ -39,6 +39,9 @@ class LanTableServer(
     private val disconnectedPlayers = mutableMapOf<String, Long>()
     private val disconnectedLock = Any()
 
+    /** 被房主主动踢出的玩家（防止 handleClient finally 重新标记为掉线） */
+    private val kickedPlayerIds = mutableSetOf<String>()
+
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
@@ -185,31 +188,43 @@ class LanTableServer(
         }
     }
 
-    /** 房主主动踢出某个玩家：先发送 Kicked 消息，再关闭其连接并从掉线列表清除 */
+    /** 房主主动踢出某个玩家：先发送 Kicked 消息，延迟关闭连接以确保消息送达 */
     fun kickPlayer(playerId: String) {
+        val conn: ClientConnection?
         synchronized(clientsLock) {
-            val conn = clients.remove(playerId)
-            conn?.let {
-                // 先尝试发送 Kicked 通知
-                runCatching {
-                    val kickedText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Kicked)
-                    it.writer.write(kickedText)
-                    it.writer.newLine()
-                    it.writer.flush()
-                }
-                it.readerJob.cancel()
-                runCatching { it.socket.close() }
-            }
+            conn = clients.remove(playerId)
         }
         synchronized(disconnectedLock) {
             disconnectedPlayers.remove(playerId)
+        }
+        // 标记为已踢出，防止 handleClient 的 finally 重新标记为掉线
+        synchronized(disconnectedLock) {
+            kickedPlayerIds.add(playerId)
+        }
+        conn?.let {
+            // 发送 Kicked 通知
+            runCatching {
+                val kickedText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.Kicked)
+                it.writer.write(kickedText)
+                it.writer.newLine()
+                it.writer.flush()
+            }
+            // 延迟关闭 socket，给客户端足够时间读取 Kicked 消息
+            scope.launch {
+                delay(500)
+                it.readerJob.cancel()
+                runCatching { it.socket.close() }
+            }
         }
     }
 
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        synchronized(disconnectedLock) {
+            disconnectedPlayers.clear()
+            kickedPlayerIds.clear()
+        }
         synchronized(clientsLock) {
             clients.values.forEach {
                 runCatching { it.socket.close() }
@@ -387,11 +402,15 @@ class LanTableServer(
                 val id = assignedId
                 if (id != null) {
                     synchronized(clientsLock) { clients.remove(id) }
-                    // 掉线进入等待重连期，不立即移除玩家
-                    synchronized(disconnectedLock) {
-                        disconnectedPlayers[id] = System.currentTimeMillis()
+                    // 如果是被踢出的玩家，不标记为掉线等待重连
+                    val wasKicked = synchronized(disconnectedLock) { kickedPlayerIds.remove(id) }
+                    if (!wasKicked) {
+                        // 掉线进入等待重连期，不立即移除玩家
+                        synchronized(disconnectedLock) {
+                            disconnectedPlayers[id] = System.currentTimeMillis()
+                        }
+                        onEvent(Event.PlayerDisconnected(id))
                     }
-                    onEvent(Event.PlayerDisconnected(id))
                 }
                 runCatching { socket.close() }
             }
