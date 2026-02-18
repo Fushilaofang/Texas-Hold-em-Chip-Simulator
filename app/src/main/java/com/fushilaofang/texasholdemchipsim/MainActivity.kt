@@ -1565,11 +1565,15 @@ private fun CropImageDialog(
                                 val imgW = originalBitmap.width.toFloat()
                                 val imgH = originalBitmap.height.toFloat()
                                 val baseScale = maxOf(containerPx / imgW, containerPx / imgH)
-                                val newUserScale = (userScale * zoom).coerceIn(1f, 6f)
+                                val cropR = containerPx * 0.43f
+                                // 最小缩放：图片最小边 >= 裁切圆直径（0.86 * containerPx）
+                                // 推导：min(imgW,imgH)*baseScale = containerPx，
+                                //       需 containerPx*minUserScale >= cropR*2，故 minUserScale = 0.86f
+                                val minUserScale = (cropR * 2f) / (minOf(imgW, imgH) * baseScale)
+                                val newUserScale = (userScale * zoom).coerceIn(minUserScale, 6f)
                                 val totalScale = baseScale * newUserScale
                                 val scaledW = imgW * totalScale
                                 val scaledH = imgH * totalScale
-                                val cropR = containerPx * 0.43f
                                 val maxPanX = ((scaledW / 2f) - cropR).coerceAtLeast(0f)
                                 val maxPanY = ((scaledH / 2f) - cropR).coerceAtLeast(0f)
                                 panX = (panX + pan.x).coerceIn(-maxPanX, maxPanX)
