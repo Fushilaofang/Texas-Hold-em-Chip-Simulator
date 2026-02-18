@@ -1152,26 +1152,23 @@ private fun GameScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("第${state.handCounter}手", fontSize = 14.sp, color = Color.Gray)
                     Text(
                         roundLabel,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.ExtraBold,
                         color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
-                    )
-                }
-                if (state.blindsEnabled && sortedPlayers.size >= 2) {
-                    Text(
-                        "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
-                        fontSize = 11.sp, color = Color.Gray, maxLines = 1
                     )
                 }
                 if (!isShowdown && turnPlayerName.isNotEmpty()) {
                     Text(
                         if (isMyTurn) "轮到你行动" else "等待 $turnPlayerName 行动",
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = if (isMyTurn) Color(0xFFE65100) else Color.Gray
                     )
@@ -1608,13 +1605,15 @@ private fun GameScreen(
                     val isWinner = state.selectedWinnerIds.contains(player.id)
                     val isOffline = state.disconnectedPlayerIds.contains(player.id)
                     val roundContrib = state.roundContributions[player.id]
-                    val roleTag = buildString {
+                    // 标识列表（中文），每个标识独立 Text chip
+                    val roleTags = buildList<String> {
                         if (state.blindsEnabled && state.players.size >= 2) {
-                            if (seatIdx == state.blindsState.dealerIndex) append("D ")
-                            if (seatIdx == state.blindsState.smallBlindIndex) append("SB ")
-                            if (seatIdx == state.blindsState.bigBlindIndex) append("BB ")
+                            if (seatIdx == state.blindsState.dealerIndex) add("庄")
+                            if (seatIdx == state.blindsState.smallBlindIndex) add("小盲")
+                            if (seatIdx == state.blindsState.bigBlindIndex) add("大盲")
                         }
-                    }.trim()
+                    }
+                    val roleTag = roleTags.joinToString(" ")
 
                     Box(
                         modifier = Modifier
@@ -1627,17 +1626,19 @@ private fun GameScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             // 上方：角色标签（庄/盲注/状态）——始终占 22dp 高度保证胶囊居中对齐
+                            // 水平对齐：左对齐贴近直边端点（Start）
                             Row(
                                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
+                                    .fillMaxWidth()
                                     .height(tagRowHeightDp)
-                                    .padding(bottom = 2.dp)
+                                    .padding(bottom = 2.dp),
                             ) {
                                 if (roleTag.isNotEmpty() || isFolded || isWinner || isOffline) {
-                                    if (roleTag.isNotEmpty()) {
+                                    roleTags.forEach { tag ->
                                         Text(
-                                            roleTag,
+                                            tag,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color.White,
