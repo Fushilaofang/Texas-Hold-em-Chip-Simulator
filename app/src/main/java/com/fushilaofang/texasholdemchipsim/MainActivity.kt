@@ -1312,27 +1312,32 @@ private fun GameScreen(
                 val tableW = minOf(size.width * 0.58f, tableH * 0.52f)
                 val cornerR = tableW / 2f
 
-                // 用 Path 绘制圆槽形（Stadium/Track 形状）
-                // 竖向 stadium：r = w/2，圆弧在上下两端
+                // 竖向胶囊形（Vertical Capsule）：高 > 宽，上下各一个半圆
+                // r = w/2；顶部半圆逆时针（sweep=-180），底部半圆顺时针（sweep=+180）
                 fun stadiumPath(left: Float, top: Float, w: Float, h: Float): Path {
                     val r = w / 2f
                     return Path().apply {
-                        moveTo(left + r, top + r)
+                        // 从顶部右侧出发
+                        moveTo(left + w, top + r)
+                        // 顶部半圆：起点右(0°)，逆时针 -180° 到左侧 → 上弧
                         arcTo(
                             rect = androidx.compose.ui.geometry.Rect(
                                 Offset(left, top), Size(2 * r, 2 * r)
                             ),
-                            startAngleDegrees = 180f, sweepAngleDegrees = 180f,
+                            startAngleDegrees = 0f, sweepAngleDegrees = -180f,
                             forceMoveTo = false
                         )
-                        lineTo(left + w, top + h - r)
+                        // 左侧竖直线向下
+                        lineTo(left, top + h - r)
+                        // 底部半圆：起点左(180°)，顺时针 +180° 到右侧 → 下弧
                         arcTo(
                             rect = androidx.compose.ui.geometry.Rect(
                                 Offset(left, top + h - 2 * r), Size(2 * r, 2 * r)
                             ),
-                            startAngleDegrees = 0f, sweepAngleDegrees = 180f,
+                            startAngleDegrees = 180f, sweepAngleDegrees = 180f,
                             forceMoveTo = false
                         )
+                        // 右侧竖直线回到起点
                         close()
                     }
                 }
@@ -1496,8 +1501,8 @@ private fun GameScreen(
 
                     // 密度转换
                     val density = LocalDensity.current
-                    val cardWidthDp = 126.dp
-                    val cardTotalHeightDp = 110.dp // 卡片+标签总高度预估
+                    val cardWidthDp = 140.dp
+                    val cardTotalHeightDp = 120.dp // 卡片+标签总高度预估
                     val cardWidthPx = with(density) { cardWidthDp.toPx() }
                     val cardTotalHeightPx = with(density) { cardTotalHeightDp.toPx() }
 
@@ -1605,21 +1610,22 @@ private fun GameScreen(
                                         color = capsuleColor,
                                         shape = RoundedCornerShape(50)
                                     )
-                                    .padding(start = 3.dp, end = 10.dp, top = 3.dp, bottom = 3.dp),
+                                    .padding(start = 2.dp, end = 10.dp, top = 2.dp, bottom = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // 头像
+                                // 头像：尺寸与胶囊端半圆直径一致（capsule高 = avatar + 2*3dp padding = avatar+6，端半圆直径 = avatar+6）
+                                // 设 avatar = 46dp → 胶囊高 ≈ 52dp，端半圆半径 ≈ 26dp ≈ avatar半径23dp，视觉上填满端盖
                                 Box {
                                     AvatarImage(
                                         avatarBase64 = player.avatarBase64,
                                         name = player.name,
-                                        size = 36
+                                        size = 46
                                     )
                                     if (player.id == state.selfId) {
                                         Box(
                                             modifier = Modifier
-                                                .size(9.dp)
+                                                .size(11.dp)
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF43A047))
                                                 .align(Alignment.BottomEnd)
@@ -1631,7 +1637,7 @@ private fun GameScreen(
                                 Column {
                                     Text(
                                         player.name,
-                                        fontSize = 13.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = Color.White,
                                         maxLines = 1,
@@ -1639,7 +1645,7 @@ private fun GameScreen(
                                     )
                                     Text(
                                         "${player.chips}",
-                                        fontSize = 12.sp,
+                                        fontSize = 13.sp,
                                         color = Color(0xFFE0E0E0)
                                     )
                                 }
