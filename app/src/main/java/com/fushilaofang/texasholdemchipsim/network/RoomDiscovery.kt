@@ -27,7 +27,8 @@ data class DiscoveredRoom(
     val hostIp: String,
     val tcpPort: Int,
     val playerCount: Int,
-    val hostName: String
+    val hostName: String,
+    val gameStarted: Boolean = false
 ) {
     /** 最后收到广播的时间（本机时间戳，不序列化） */
     @kotlinx.serialization.Transient
@@ -42,7 +43,8 @@ private data class RoomBroadcast(
     val roomName: String,
     val tcpPort: Int,
     val playerCount: Int,
-    val hostName: String
+    val hostName: String,
+    val gameStarted: Boolean = false
 )
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -58,7 +60,8 @@ class RoomAdvertiser {
         roomName: String,
         tcpPort: Int,
         hostName: String,
-        playerCountProvider: () -> Int
+        playerCountProvider: () -> Int,
+        gameStartedProvider: () -> Boolean = { false }
     ) {
         stopBroadcast()
         broadcastJob = scope.launch {
@@ -72,7 +75,8 @@ class RoomAdvertiser {
                         roomName = roomName,
                         tcpPort = tcpPort,
                         playerCount = playerCountProvider(),
-                        hostName = hostName
+                        hostName = hostName,
+                        gameStarted = gameStartedProvider()
                     )
                     val data = json.encodeToString(RoomBroadcast.serializer(), packet).toByteArray()
                     val dgram = DatagramPacket(data, data.size, broadcastAddress, DISCOVERY_PORT)
@@ -132,7 +136,8 @@ class RoomScanner {
                             hostIp = hostIp,
                             tcpPort = broadcast.tcpPort,
                             playerCount = broadcast.playerCount,
-                            hostName = broadcast.hostName
+                            hostName = broadcast.hostName,
+                            gameStarted = broadcast.gameStarted
                         ).also { it.lastSeen = System.currentTimeMillis() }
                         rooms[key] = room
                     } catch (_: java.net.SocketTimeoutException) {

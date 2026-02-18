@@ -353,11 +353,18 @@ private fun JoinRoomScreen(
             Text("发现的房间:", fontWeight = FontWeight.Bold)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.discoveredRooms) { room ->
+                    val started = room.gameStarted
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onJoinRoom(room, state.savedPlayerName, state.savedBuyIn) },
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+                            .clickable {
+                                if (!started) {
+                                    onJoinRoom(room, state.savedPlayerName, state.savedBuyIn)
+                                }
+                            },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (started) Color(0xFFF5F5F5) else Color(0xFFE8F5E9)
+                        )
                     ) {
                         Row(
                             modifier = Modifier
@@ -367,13 +374,21 @@ private fun JoinRoomScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                                    color = if (started) Color.Gray else Color.Unspecified)
                                 Text(
                                     "房主: ${room.hostName} | ${room.playerCount}人在线",
                                     fontSize = 12.sp, color = Color.Gray
                                 )
+                                if (started) {
+                                    Text("游戏已开始，不可加入", fontSize = 11.sp, color = Color(0xFFE53935))
+                                }
                             }
-                            Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            if (started) {
+                                Text("🔒 已开始", color = Color.Gray, fontSize = 13.sp)
+                            } else {
+                                Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }

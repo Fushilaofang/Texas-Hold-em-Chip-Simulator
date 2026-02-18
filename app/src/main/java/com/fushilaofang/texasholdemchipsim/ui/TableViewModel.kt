@@ -632,7 +632,8 @@ class TableViewModel(
             roomName = _uiState.value.tableName,
             tcpPort = 45454,
             hostName = _uiState.value.selfName,
-            playerCountProvider = { _uiState.value.players.size }
+            playerCountProvider = { _uiState.value.players.size },
+            gameStartedProvider = { _uiState.value.gameStarted }
         )
     }
 
