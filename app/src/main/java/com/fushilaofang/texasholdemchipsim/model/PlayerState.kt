@@ -8,5 +8,6 @@ data class PlayerState(
     val name: String,
     val chips: Int,
     val seatOrder: Int,
-    val isReady: Boolean = false
+    val isReady: Boolean = false,
+    val avatarBase64: String = ""
 )

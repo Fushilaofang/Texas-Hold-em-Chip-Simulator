@@ -1,10 +1,18 @@
 package com.fushilaofang.texasholdemchipsim
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -25,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,12 +57,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fushilaofang.texasholdemchipsim.blinds.BlindsConfig
@@ -65,6 +79,7 @@ import com.fushilaofang.texasholdemchipsim.ui.TableMode
 import com.fushilaofang.texasholdemchipsim.ui.TableUiState
 import com.fushilaofang.texasholdemchipsim.ui.TableViewModel
 import com.fushilaofang.texasholdemchipsim.ui.TableViewModelFactory
+import com.fushilaofang.texasholdemchipsim.util.AvatarHelper
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -76,6 +91,33 @@ class MainActivity : ComponentActivity() {
         setContent {
             val vm: TableViewModel = viewModel(factory = TableViewModelFactory(applicationContext))
             val state by vm.uiState.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+
+            // 图片选择器（申请权限 + 选取）
+            val imagePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.GetContent()
+            ) { uri ->
+                uri?.let {
+                    val base64 = AvatarHelper.uriToBase64(context, it)
+                    if (base64.isNotBlank()) vm.saveAvatarBase64(base64)
+                }
+            }
+            val permissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) imagePicker.launch("image/*")
+            }
+            val launchAvatarPicker: () -> Unit = {
+                val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                    Manifest.permission.READ_MEDIA_IMAGES
+                else
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                    imagePicker.launch("image/*")
+                } else {
+                    permissionLauncher.launch(permission)
+                }
+            }
 
             Surface(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = MaterialTheme.colorScheme.background) {
                 when (state.screen) {
@@ -85,7 +127,8 @@ class MainActivity : ComponentActivity() {
                         onNavigateJoin = { vm.navigateTo(ScreenState.JOIN_ROOM) },
                         onPlayerNameChange = vm::savePlayerName,
                         onBuyInChange = vm::saveBuyIn,
-                        onRejoin = vm::rejoinSession
+                        onRejoin = vm::rejoinSession,
+                        onPickAvatar = launchAvatarPicker
                     )
                     ScreenState.CREATE_ROOM -> CreateRoomScreen(
                         state = state,
@@ -124,6 +167,8 @@ class MainActivity : ComponentActivity() {
                         onUpdateBlindsConfig = vm::updateBlindsConfig,
                         onMovePlayer = vm::movePlayer,
                         onSetDealer = vm::setDealerInGame,
+                        onUpdateMyProfile = vm::updateMyProfile,
+                        onPickAvatar = launchAvatarPicker,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -165,7 +210,8 @@ private fun HomeScreen(
     onNavigateJoin: () -> Unit,
     onPlayerNameChange: (String) -> Unit,
     onBuyInChange: (Int) -> Unit,
-    onRejoin: () -> Unit
+    onRejoin: () -> Unit,
+    onPickAvatar: () -> Unit
 ) {
     var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
@@ -182,7 +228,17 @@ private fun HomeScreen(
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold
         )
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(24.dp))
+
+        // 头像选择区域
+        AvatarPicker(
+            avatarBase64 = state.savedAvatarBase64,
+            size = 80,
+            onClick = onPickAvatar
+        )
+        Spacer(Modifier.height(4.dp))
+        Text("点击更换头像", fontSize = 11.sp, color = Color.Gray)
+        Spacer(Modifier.height(16.dp))
 
         OutlinedTextField(
             value = playerName,
@@ -232,6 +288,102 @@ private fun HomeScreen(
             ) {
                 Text("重新加入「${state.lastSessionTableName}」($modeLabel)", fontSize = 16.sp)
             }
+        }
+    }
+}
+
+// ==================== 头像组件 ====================
+
+/**
+ * 可点击的圆形头像框：有头像时显示图片，无头像时显示首字母占位符
+ */
+@Composable
+private fun AvatarPicker(
+    avatarBase64: String,
+    size: Int = 48,
+    onClick: () -> Unit
+) {
+    val bitmap = remember(avatarBase64) {
+        if (avatarBase64.isBlank()) null
+        else {
+            try {
+                val bytes = android.util.Base64.decode(avatarBase64, android.util.Base64.NO_WRAP)
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            } catch (_: Exception) { null }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(size.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFBDBDBD))
+            .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "头像",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                text = "📷",
+                fontSize = (size / 2.5).sp,
+                color = Color.White
+            )
+        }
+    }
+}
+
+/**
+ * 圆形头像展示（不可点击），用于玩家卡片
+ */
+@Composable
+private fun AvatarImage(
+    avatarBase64: String,
+    name: String,
+    size: Int = 40
+) {
+    val bitmap = remember(avatarBase64) {
+        if (avatarBase64.isBlank()) null
+        else {
+            try {
+                val bytes = android.util.Base64.decode(avatarBase64, android.util.Base64.NO_WRAP)
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            } catch (_: Exception) { null }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(size.dp)
+            .clip(CircleShape)
+            .background(
+                when {
+                    name.isNotEmpty() -> Color(
+                        0xFF607D8B.toInt() + (name.hashCode() and 0x003F3F3F)
+                    )
+                    else -> Color(0xFF9E9E9E)
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Text(
+                text = name.take(1).uppercase(),
+                fontSize = (size / 2.2).sp,
+                color = Color.White,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -646,7 +798,9 @@ private fun GameScreen(
     onMovePlayer: (String, Int) -> Unit,
     onSetDealer: (Int) -> Unit,
     getMinContribution: (String) -> Int,
-    onLeave: () -> Unit
+    onLeave: () -> Unit,
+    onUpdateMyProfile: (String, String) -> Unit = { _, _ -> },
+    onPickAvatar: () -> Unit = {}
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
@@ -658,6 +812,7 @@ private fun GameScreen(
     var showExitConfirm by remember { mutableStateOf(false) }
     var showBlindEditDialog by remember { mutableStateOf(false) }
     var showReorderPanel by remember { mutableStateOf(false) }
+    var showEditProfileDialog by remember { mutableStateOf(false) }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     // 手间空档：翻牌前且没有任何行动（可调整顺序）
     val isBetweenHands = state.currentRound == BettingRound.PRE_FLOP &&
@@ -676,6 +831,52 @@ private fun GameScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showExitConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 修改本人资料对话框
+    if (showEditProfileDialog) {
+        val myPlayer = state.players.firstOrNull { it.id == state.selfId }
+        var editName by remember { mutableStateOf(myPlayer?.name ?: state.savedPlayerName) }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showEditProfileDialog = false },
+            title = { Text("修改昵称和头像", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // 头像选择器
+                    AvatarPicker(
+                        avatarBase64 = state.savedAvatarBase64,
+                        size = 72,
+                        onClick = {
+                            showEditProfileDialog = false
+                            onPickAvatar()
+                        }
+                    )
+                    Text("点击头像可更换图片", fontSize = 11.sp, color = Color.Gray)
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("昵称") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (editName.isNotBlank()) {
+                        onUpdateMyProfile(editName.trim(), state.savedAvatarBase64)
+                    }
+                    showEditProfileDialog = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showEditProfileDialog = false }) { Text("取消") }
             }
         )
     }
@@ -988,6 +1189,7 @@ private fun GameScreen(
                     state = state,
                     sortedPlayers = sortedPlayers,
                     getMinContribution = getMinContribution,
+                    onEditProfile = if (player.id == state.selfId) { _ -> showEditProfileDialog = true } else null,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
@@ -1170,12 +1372,14 @@ private fun GameScreen(
 
 // ==================== 紧凑玩家卡片 ====================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CompactPlayerCard(
     player: PlayerState,
     state: TableUiState,
     sortedPlayers: List<PlayerState>,
     getMinContribution: (String) -> Int,
+    onEditProfile: ((PlayerState) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val seatIdx = sortedPlayers.indexOf(player)
@@ -1210,11 +1414,38 @@ private fun CompactPlayerCard(
             Row(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 左侧：身份信息
+                // 最左侧：头像（可长按编辑本人资料）
+                Box(
+                    modifier = if (isMe && onEditProfile != null)
+                        Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = { onEditProfile(player) }
+                        )
+                    else Modifier
+                ) {
+                    AvatarImage(
+                        avatarBase64 = player.avatarBase64,
+                        name = player.name,
+                        size = 38
+                    )
+                    // 本人标识小圆点
+                    if (isMe) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF43A047))
+                                .align(Alignment.BottomEnd)
+                                .border(1.dp, Color.White, CircleShape)
+                        )
+                    }
+                }
+
+                // 中间：身份信息
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -1253,6 +1484,9 @@ private fun CompactPlayerCard(
                         if (minContrib > 0) {
                             Text("最低投入: $minContrib", fontSize = 10.sp, color = Color(0xFFE65100))
                         }
+                    }
+                    if (isMe && onEditProfile != null) {
+                        Text("长按头像修改资料", fontSize = 9.sp, color = Color(0xFF9E9E9E))
                     }
                 }
 

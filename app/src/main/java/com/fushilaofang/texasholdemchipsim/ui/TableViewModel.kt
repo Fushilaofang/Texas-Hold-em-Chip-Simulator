@@ -93,7 +93,8 @@ data class TableUiState(
     val savedRoomName: String = "家庭牌局",
     val savedBuyIn: Int = 1000,
     val savedSmallBlind: Int = 10,
-    val savedBigBlind: Int = 20
+    val savedBigBlind: Int = 20,
+    val savedAvatarBase64: String = ""  // 本机玩家头像
 )
 
 class TableViewModel(
@@ -130,7 +131,8 @@ class TableViewModel(
             savedRoomName = prefs.getString("room_name", "家庭牌局") ?: "家庭牌局",
             savedBuyIn = prefs.getInt("buy_in", 1000),
             savedSmallBlind = prefs.getInt("small_blind", 10),
-            savedBigBlind = prefs.getInt("big_blind", 20)
+            savedBigBlind = prefs.getInt("big_blind", 20),
+            savedAvatarBase64 = prefs.getString("avatar_base64", "") ?: ""
         )
     )
     val uiState: StateFlow<TableUiState> = _uiState.asStateFlow()
@@ -144,6 +146,69 @@ class TableViewModel(
     fun savePlayerName(name: String) {
         _uiState.update { it.copy(savedPlayerName = name) }
         prefs.edit().putString("player_name", name).apply()
+    }
+
+    fun saveAvatarBase64(base64: String) {
+        _uiState.update { it.copy(savedAvatarBase64 = base64) }
+        prefs.edit().putString("avatar_base64", base64).apply()
+        // 同时更新已在房间内的玩家头像
+        val selfId = _uiState.value.selfId
+        if (selfId.isNotBlank()) {
+            _uiState.update { state ->
+                state.copy(
+                    players = state.players.map {
+                        if (it.id == selfId) it.copy(avatarBase64 = base64) else it
+                    }
+                )
+            }
+            if (_uiState.value.mode == TableMode.HOST) {
+                syncToClients()
+            } else if (_uiState.value.mode == TableMode.CLIENT) {
+                val name = _uiState.value.players.firstOrNull { it.id == selfId }?.name
+                    ?: _uiState.value.savedPlayerName
+                client.sendUpdateProfile(selfId, name, base64)
+            }
+        }
+    }
+
+    /**
+     * 玩家更新自己的昵称和头像（房主或客户端均可调用）
+     */
+    fun updateMyProfile(newName: String, avatarBase64: String) {
+        val state = _uiState.value
+        val selfId = state.selfId
+        if (selfId.isBlank()) return
+        _uiState.update { s ->
+            s.copy(
+                savedPlayerName = newName,
+                savedAvatarBase64 = avatarBase64,
+                players = s.players.map {
+                    if (it.id == selfId) it.copy(name = newName, avatarBase64 = avatarBase64) else it
+                }
+            )
+        }
+        prefs.edit().putString("player_name", newName).putString("avatar_base64", avatarBase64).apply()
+        if (state.mode == TableMode.HOST) {
+            syncToClients()
+        } else if (state.mode == TableMode.CLIENT) {
+            client.sendUpdateProfile(selfId, newName, avatarBase64)
+        }
+    }
+
+    /**
+     * 房主强制更新任意玩家的头像（仅头像，不能改名）
+     */
+    fun updatePlayerAvatar(playerId: String, avatarBase64: String) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        _uiState.update { s ->
+            s.copy(
+                players = s.players.map {
+                    if (it.id == playerId) it.copy(avatarBase64 = avatarBase64) else it
+                }
+            )
+        }
+        syncToClients()
     }
 
     fun saveRoomName(name: String) {
@@ -232,7 +297,8 @@ class TableViewModel(
             name = hostName.ifBlank { "庄家" },
             chips = buyIn,
             seatOrder = 0,
-            isReady = true // 房主默认准备
+            isReady = true, // 房主默认准备
+            avatarBase64 = _uiState.value.savedAvatarBase64
         )
         val initialBlinds = blindsManager.initialize(1, blindsConfig)
 
@@ -1176,6 +1242,18 @@ class TableViewModel(
             is LanTableServer.Event.FoldReceived -> {
                 processFold(event.playerId)
             }
+            is LanTableServer.Event.ProfileUpdateReceived -> {
+                _uiState.update { state ->
+                    state.copy(
+                        players = state.players.map {
+                            if (it.id == event.playerId)
+                                it.copy(name = event.newName.ifBlank { it.name }, avatarBase64 = event.avatarBase64)
+                            else it
+                        }
+                    )
+                }
+                syncToClients()
+            }
             else -> Unit
         }
     }
@@ -1185,6 +1263,12 @@ class TableViewModel(
             is LanTableClient.Event.JoinAccepted -> {
                 _uiState.update { it.copy(selfId = event.playerId, info = "已加入「${_uiState.value.tableName}」") }
                 saveSession()
+                // 加入后立即上传本机头像
+                val avatar = _uiState.value.savedAvatarBase64
+                val name = _uiState.value.savedPlayerName
+                if (avatar.isNotBlank()) {
+                    client.sendUpdateProfile(event.playerId, name, avatar)
+                }
             }
             is LanTableClient.Event.StateSync -> {
                 _uiState.update {

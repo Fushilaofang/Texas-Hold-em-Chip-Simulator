@@ -109,4 +109,15 @@ sealed class NetworkMessage {
     data class ReconnectAccepted(
         val playerId: String
     ) : NetworkMessage()
+
+    /**
+     * 玩家更新自己的昵称和头像（客户端 → 服务端）
+     */
+    @Serializable
+    @SerialName("update_profile")
+    data class UpdateProfile(
+        val playerId: String,
+        val newName: String,
+        val avatarBase64: String = ""
+    ) : NetworkMessage()
 }

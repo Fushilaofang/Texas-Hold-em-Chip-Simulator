@@ -47,6 +47,7 @@ class LanTableServer(
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class WinToggleReceived(val playerId: String, val isWinner: Boolean) : Event()
         data class FoldReceived(val playerId: String) : Event()
+        data class ProfileUpdateReceived(val playerId: String, val newName: String, val avatarBase64: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -288,6 +289,10 @@ class LanTableServer(
 
                         is NetworkMessage.Fold -> {
                             onEvent(Event.FoldReceived(msg.playerId))
+                        }
+
+                        is NetworkMessage.UpdateProfile -> {
+                            onEvent(Event.ProfileUpdateReceived(msg.playerId, msg.newName, msg.avatarBase64))
                         }
 
                         is NetworkMessage.Reconnect -> {
@@ -718,6 +723,18 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.Fold(playerId = playerId)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun sendUpdateProfile(playerId: String, newName: String, avatarBase64: String) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.UpdateProfile(playerId = playerId, newName = newName, avatarBase64 = avatarBase64)
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()
