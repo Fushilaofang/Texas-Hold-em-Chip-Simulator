@@ -1138,38 +1138,13 @@ private fun GameScreen(
             .fillMaxSize()
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
-        // ========== 顶部信息栏 + 记录按钮 ==========
+        // ========== 顶部栏：房间名 + 记录 + 菜单 ==========
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
-                    Text(
-                        roundLabel,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
-                    )
-                }
-                if (state.blindsEnabled && sortedPlayers.size >= 2) {
-                    Text(
-                        "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
-                        fontSize = 11.sp, color = Color.Gray, maxLines = 1
-                    )
-                }
-                if (!isShowdown && turnPlayerName.isNotEmpty()) {
-                    Text(
-                        if (isMyTurn) "轮到你行动" else "等待 $turnPlayerName 行动",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isMyTurn) Color(0xFFE65100) else Color.Gray
-                    )
-                }
-            }
+            Text(state.tableName, fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.weight(1f))
             OutlinedButton(
                 onClick = { showLogs = true },
                 modifier = Modifier.padding(start = 8.dp)
@@ -1288,44 +1263,101 @@ private fun GameScreen(
             }
         }
 
-        // 边池信息
-        if (state.lastSidePots.size > 1) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
-            ) {
-                Column(modifier = Modifier.padding(6.dp)) {
-                    Text("边池详情", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    state.lastSidePots.forEach { pot ->
-                        val names = sortedPlayers
-                            .filter { pot.eligiblePlayerIds.contains(it.id) }
-                            .joinToString(", ") { it.name }
-                        Text("${pot.label}: ${pot.amount} | $names", fontSize = 11.sp)
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
-
-        // ========== 玩家列表（纵向，均匀填满，无需滚动） ==========
+        // ========== 中间区域（信息1/4 + 玩家3/4）==========
         Column(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+                .fillMaxWidth()
         ) {
-            sortedPlayers.forEach { player ->
-                CompactPlayerCard(
-                    player = player,
-                    state = state,
-                    sortedPlayers = sortedPlayers,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                )
+            // ---- 信息展示区（1/4）----
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                // 手数 + 轮次
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("第${state.handCounter}手", fontSize = 13.sp, color = Color.Gray)
+                    Text(
+                        roundLabel,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isShowdown) Color(0xFFE65100) else Color(0xFF1976D2)
+                    )
+                    if (!isShowdown && turnPlayerName.isNotEmpty()) {
+                        Text(
+                            if (isMyTurn) "⬤ 轮到你行动" else "等待 $turnPlayerName",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isMyTurn) Color(0xFFE65100) else Color.Gray,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                // 盲注信息
+                if (state.blindsEnabled && sortedPlayers.size >= 2) {
+                    Text(
+                        "庄:$dealerName  小盲:$sbName  大盲:$bbName  (${state.blindsState.config.smallBlind}/${state.blindsState.config.bigBlind})",
+                        fontSize = 11.sp, color = Color.Gray, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+                // 底池 + 边池信息
+                val totalPot = state.roundContributions.values.sum() +
+                        state.contributionInputs.values.sumOf { it.toIntOrNull() ?: 0 }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "底池: $totalPot",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1565C0)
+                    )
+                    if (state.lastSidePots.size > 1) {
+                        state.lastSidePots.forEach { pot ->
+                            Text(
+                                "${pot.label}:${pot.amount}",
+                                fontSize = 11.sp,
+                                color = Color(0xFFE65100),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(4.dp))
+
+            // ---- 玩家卡片区（3/4）----
+            Column(
+                modifier = Modifier
+                    .weight(3f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                sortedPlayers.forEach { player ->
+                    CompactPlayerCard(
+                        player = player,
+                        state = state,
+                        sortedPlayers = sortedPlayers,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                    )
+                }
             }
         }
 
