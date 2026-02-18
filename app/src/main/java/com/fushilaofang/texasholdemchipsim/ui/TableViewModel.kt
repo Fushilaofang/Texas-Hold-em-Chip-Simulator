@@ -509,8 +509,8 @@ class TableViewModel(
     }
 
     /**
-     * 玩家提交自己的本手投入（房主直接更新本地，客户端发送到服务端）
-     * 投入代表本手总投入（包含盲注），结算时由引擎统一从筹码扣除。
+     * 玩家提交自己的本手投入（累加模式：每次提交叠加到本手总投入）
+     * 结算时由引擎统一从筹码扣除。
      */
     fun submitMyContribution(amount: Int) {
         val state = _uiState.value
@@ -536,18 +536,22 @@ class TableViewModel(
 
         if (state.mode == TableMode.HOST) {
             _uiState.update {
+                val prev = it.contributionInputs[selfId]?.toIntOrNull() ?: 0
+                val total = prev + amount
                 it.copy(
-                    contributionInputs = it.contributionInputs + (selfId to amount.toString()),
-                    info = "已提交投入: $amount"
+                    contributionInputs = it.contributionInputs + (selfId to total.toString()),
+                    info = "已投入: $total（本次+$amount）"
                 )
             }
             syncToClients()
         } else if (state.mode == TableMode.CLIENT) {
             client.sendContribution(selfId, amount)
             _uiState.update {
+                val prev = it.contributionInputs[selfId]?.toIntOrNull() ?: 0
+                val total = prev + amount
                 it.copy(
-                    contributionInputs = it.contributionInputs + (selfId to amount.toString()),
-                    info = "已提交投入: $amount"
+                    contributionInputs = it.contributionInputs + (selfId to total.toString()),
+                    info = "已投入: $total（本次+$amount）"
                 )
             }
         }
@@ -742,11 +746,12 @@ class TableViewModel(
             }
             is LanTableServer.Event.ContributionReceived -> {
                 _uiState.update { state ->
-                    val newInputs = state.contributionInputs + (event.playerId to event.amount.toString())
+                    val prev = state.contributionInputs[event.playerId]?.toIntOrNull() ?: 0
+                    val total = prev + event.amount
                     val playerName = state.players.firstOrNull { it.id == event.playerId }?.name ?: event.playerId.take(6)
                     state.copy(
-                        contributionInputs = newInputs,
-                        info = "$playerName 提交投入: ${event.amount}"
+                        contributionInputs = state.contributionInputs + (event.playerId to total.toString()),
+                        info = "$playerName 投入: $total（+${event.amount}）"
                     )
                 }
                 syncToClients()

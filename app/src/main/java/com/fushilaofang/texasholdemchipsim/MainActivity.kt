@@ -843,24 +843,6 @@ private fun GameScreen(
                         }
                     }
                 }
-                // 页面指示器
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    repeat(2) { idx ->
-                        Box(
-                            modifier = Modifier
-                                .size(if (pagerState.currentPage == idx) 6.dp else 4.dp)
-                                .background(
-                                    if (pagerState.currentPage == idx) Color.DarkGray else Color.LightGray,
-                                    shape = androidx.compose.foundation.shape.CircleShape
-                                )
-                        )
-                    }
-                }
             }
         }
     }
