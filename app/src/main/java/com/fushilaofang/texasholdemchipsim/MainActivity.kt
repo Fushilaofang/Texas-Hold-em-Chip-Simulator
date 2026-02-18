@@ -1329,12 +1329,12 @@ private fun GameScreen(
                         )
                         // 左侧竖直线向下
                         lineTo(left, top + h - r)
-                        // 底部半圆：起点左(180°)，顺时针 +180° 到右侧 → 下弧
+                        // 底部半圆：起点左(180°)，逆时针 -180° 到右侧 → 下弧（经过底部最低点）
                         arcTo(
                             rect = androidx.compose.ui.geometry.Rect(
                                 Offset(left, top + h - 2 * r), Size(2 * r, 2 * r)
                             ),
-                            startAngleDegrees = 180f, sweepAngleDegrees = 180f,
+                            startAngleDegrees = 180f, sweepAngleDegrees = -180f,
                             forceMoveTo = false
                         )
                         // 右侧竖直线回到起点
