@@ -1,5 +1,10 @@
 package com.fushilaofang.texasholdemchipsim.network
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import com.fushilaofang.texasholdemchipsim.model.ChipTransaction
 import com.fushilaofang.texasholdemchipsim.model.PlayerState
 import java.io.BufferedReader
@@ -176,7 +181,8 @@ class LanTableServer(
         currentTurnPlayerId: String = "",
         roundContributions: Map<String, Int> = emptyMap(),
         actedPlayerIds: Set<String> = emptySet(),
-        initialDealerIndex: Int = 0
+        initialDealerIndex: Int = 0,
+        disconnectedPlayerIds: Set<String> = emptySet()
     ) {
         val message = NetworkMessage.StateSync(
             players = players,
@@ -193,7 +199,8 @@ class LanTableServer(
             currentTurnPlayerId = currentTurnPlayerId,
             roundContributions = roundContributions,
             actedPlayerIds = actedPlayerIds,
-            initialDealerIndex = initialDealerIndex
+            initialDealerIndex = initialDealerIndex,
+            disconnectedPlayerIds = disconnectedPlayerIds
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -465,6 +472,12 @@ class LanTableClient(
     private var reconnecting = false
     private var shouldReconnect = true
 
+    /** 网络监听 */
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var isLanAvailable = true
+    @Volatile private var pendingNetworkRestore: (() -> Unit)? = null
+
     sealed class Event {
         data class JoinAccepted(val playerId: String) : Event()
         data class StateSync(
@@ -482,8 +495,12 @@ class LanTableClient(
             val currentTurnPlayerId: String = "",
             val roundContributions: Map<String, Int> = emptyMap(),
             val actedPlayerIds: Set<String> = emptySet(),
-            val initialDealerIndex: Int = 0
+            val initialDealerIndex: Int = 0,
+            val disconnectedPlayerIds: Set<String> = emptySet()
         ) : Event()
+
+        object LanDisconnected : Event()
+        object LanReconnecting : Event()
 
         data class Disconnected(val willReconnect: Boolean) : Event()
         data class Reconnected(val playerId: String) : Event()
@@ -591,7 +608,8 @@ class LanTableClient(
                                     currentTurnPlayerId = msg.currentTurnPlayerId,
                                     roundContributions = msg.roundContributions,
                                     actedPlayerIds = msg.actedPlayerIds,
-                                    initialDealerIndex = msg.initialDealerIndex
+                                    initialDealerIndex = msg.initialDealerIndex,
+                                    disconnectedPlayerIds = msg.disconnectedPlayerIds
                                 )
                             )
                         }
@@ -756,6 +774,83 @@ class LanTableClient(
         writer = null
         runCatching { socket?.close() }
         socket = null
+        stopNetworkMonitor()
+    }
+
+    /**
+     * 启动网络连通性监听。
+     * 当局域网断开时触发 onLanLost，恢复时触发 onLanRestored。
+     */
+    fun startNetworkMonitor(context: Context, onEvent: (Event) -> Unit) {
+        stopNetworkMonitor()
+        val cm = context.applicationContext
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivityManager = cm
+
+        // 检查当前网络状态
+        val activeNet = cm.activeNetwork
+        val caps = activeNet?.let { cm.getNetworkCapabilities(it) }
+        isLanAvailable = caps != null &&
+            (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val c = cm.getNetworkCapabilities(network) ?: return
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    c.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                    val wasLost = !isLanAvailable
+                    isLanAvailable = true
+                    if (wasLost && shouldReconnect && assignedPlayerId != null) {
+                        // 网络恢复：通知 UI 正在重连，然后重连
+                        onEvent(Event.LanReconnecting)
+                        scope.launch {
+                            delay(500) // 等待 IP 分配稳定
+                            if (shouldReconnect) {
+                                reconnecting = false
+                                doConnect(lastHostIp ?: return@launch,
+                                    lastPlayerName ?: return@launch,
+                                    lastBuyIn,
+                                    isReconnect = true,
+                                    onEvent = onEvent)
+                            }
+                        }
+                    }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                val c = cm.getNetworkCapabilities(network)
+                // 若当前已无 WiFi/以太网，视为局域网断开
+                val stillHasLan = cm.activeNetwork?.let { n ->
+                    cm.getNetworkCapabilities(n)?.let {
+                        it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        it.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                    }
+                } ?: false
+                if (!stillHasLan && isLanAvailable) {
+                    isLanAvailable = false
+                    if (shouldReconnect && assignedPlayerId != null) {
+                        onEvent(Event.LanDisconnected)
+                    }
+                }
+            }
+        }
+        networkCallback = cb
+        try { cm.registerNetworkCallback(request, cb) } catch (_: Exception) {}
+    }
+
+    private fun stopNetworkMonitor() {
+        try {
+            val cb = networkCallback ?: return
+            connectivityManager?.unregisterNetworkCallback(cb)
+        } catch (_: Exception) {}
+        networkCallback = null
+        connectivityManager = null
     }
 
     fun close() {

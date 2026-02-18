@@ -39,7 +39,8 @@ sealed class NetworkMessage {
         val currentTurnPlayerId: String = "",
         val roundContributions: Map<String, Int> = emptyMap(),
         val actedPlayerIds: Set<String> = emptySet(),
-        val initialDealerIndex: Int = 0
+        val initialDealerIndex: Int = 0,
+        val disconnectedPlayerIds: Set<String> = emptySet()
     ) : NetworkMessage()
 
     /**
