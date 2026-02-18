@@ -460,7 +460,6 @@ private fun LobbyScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("边池规则", fontSize = 13.sp)
                 Switch(checked = state.sidePotEnabled, onCheckedChange = onToggleSidePot)
-                Text(if (state.sidePotEnabled) "开启" else "关闭", fontSize = 11.sp, color = Color.Gray)
             }
         }
 

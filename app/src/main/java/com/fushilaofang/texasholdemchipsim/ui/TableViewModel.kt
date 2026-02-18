@@ -115,7 +115,6 @@ class TableViewModel(
 
     private val _uiState = MutableStateFlow(
         TableUiState(
-            logs = repository.load().takeLast(200),
             savedPlayerName = prefs.getString("player_name", "") ?: "",
             savedRoomName = prefs.getString("room_name", "家庭牌局") ?: "家庭牌局",
             savedBuyIn = prefs.getInt("buy_in", 1000),
@@ -242,6 +241,7 @@ class TableViewModel(
                 blindContributions = emptyMap(),
                 lastSidePots = emptyList(),
                 gameStarted = false,
+                logs = emptyList(),
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 canRejoin = false,
@@ -267,6 +267,7 @@ class TableViewModel(
                 hostIp = room.hostIp,
                 selfName = playerName,
                 gameStarted = false,
+                logs = emptyList(),
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 canRejoin = false,
@@ -846,6 +847,7 @@ class TableViewModel(
                     blindContributions = blindContributions,
                     selectedWinnerIds = emptySet(),
                     lastSidePots = emptyList(),
+                    logs = repository.load().takeLast(500),
                     canRejoin = false,
                     // 标记所有非房主玩家为掉线
                     disconnectedPlayerIds = players.filter { p -> p.id != selfId }.map { p -> p.id }.toSet(),
