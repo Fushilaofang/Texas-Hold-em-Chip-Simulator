@@ -122,6 +122,7 @@ class MainActivity : ComponentActivity() {
                         onToggleBlinds = vm::toggleBlinds,
                         onToggleSidePot = vm::toggleSidePot,
                         onUpdateBlindsConfig = vm::updateBlindsConfig,
+                        onMovePlayer = vm::movePlayer,
                         getMinContribution = vm::getMinContribution,
                         onLeave = vm::goHome
                     )
@@ -641,6 +642,7 @@ private fun GameScreen(
     onToggleBlinds: (Boolean) -> Unit,
     onToggleSidePot: (Boolean) -> Unit,
     onUpdateBlindsConfig: (Int, Int) -> Unit,
+    onMovePlayer: (String, Int) -> Unit,
     getMinContribution: (String) -> Int,
     onLeave: () -> Unit
 ) {
@@ -653,7 +655,12 @@ private fun GameScreen(
     var showMenu by remember { mutableStateOf(false) }
     var showExitConfirm by remember { mutableStateOf(false) }
     var showBlindEditDialog by remember { mutableStateOf(false) }
+    var showReorderPanel by remember { mutableStateOf(false) }
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
+    // 手间空档：翻牌前且没有任何行动（可调整顺序）
+    val isBetweenHands = state.currentRound == BettingRound.PRE_FLOP &&
+            state.actedPlayerIds.isEmpty() &&
+            state.contributionInputs.isEmpty()
     if (showExitConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showExitConfirm = false },
@@ -667,6 +674,68 @@ private fun GameScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = { showExitConfirm = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 游戏中调整玩家顺序面板
+    if (showReorderPanel && state.mode == TableMode.HOST) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showReorderPanel = false },
+            title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("拖动 ▲▼ 调整座位顺序，下一手生效", fontSize = 12.sp, color = Color.Gray)
+                    val reorderPlayers = state.players.sortedBy { it.seatOrder }
+                    reorderPlayers.forEachIndexed { seatIdx, player ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                "${seatIdx + 1}.",
+                                fontSize = 13.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.widthIn(min = 20.dp)
+                            )
+                            Text(
+                                player.name,
+                                modifier = Modifier.weight(1f),
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp
+                            )
+                            Text("${player.chips}", fontSize = 12.sp, color = Color.Gray)
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1)
+                                    },
+                                    enabled = seatIdx > 0,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) { Text("▲", fontSize = 12.sp) }
+                                OutlinedButton(
+                                    onClick = {
+                                        if (seatIdx < reorderPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1)
+                                    },
+                                    enabled = seatIdx < reorderPlayers.size - 1,
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(30.dp)
+                                ) { Text("▼", fontSize = 12.sp) }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showReorderPanel = false }) { Text("完成") }
             }
         )
     }
@@ -810,6 +879,25 @@ private fun GameScreen(
                                 onClick = { showMenu = false; showBlindEditDialog = true }
                             )
                         }
+                        DropdownMenuItem(
+                            text = {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text("调整玩家顺序")
+                                    if (!isBetweenHands) {
+                                        Text(
+                                            "(手间可用)",
+                                            fontSize = 11.sp,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                }
+                            },
+                            enabled = isBetweenHands,
+                            onClick = { showMenu = false; showReorderPanel = true }
+                        )
                         HorizontalDivider()
                     }
                     if (state.mode == TableMode.HOST) {
