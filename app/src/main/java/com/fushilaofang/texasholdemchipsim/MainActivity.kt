@@ -736,7 +736,7 @@ private fun LobbyScreen(
 
                 val cardColor = when {
                     isOffline -> Color(0xFFEEEEEE)
-                    isDealer && state.mode == TableMode.HOST -> Color(0xFFFFF8E1)
+                    isDealer -> Color(0xFFFFF8E1)
                     player.isReady -> Color(0xFFE8F5E9)
                     else -> MaterialTheme.colorScheme.surface
                 }
@@ -759,7 +759,7 @@ private fun LobbyScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (isDealer && state.mode == TableMode.HOST) {
+                                if (isDealer) {
                                     Text("[庄]", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
                                 }
                                 Text(
