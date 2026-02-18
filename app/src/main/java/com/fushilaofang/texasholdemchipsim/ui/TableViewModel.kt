@@ -716,6 +716,51 @@ class TableViewModel(
 
     // ==================== 开始游戏 / 结算 ====================
 
+    /**
+     * 为本手盲注扣除生成日志条目
+     * @param handId      手 ID，如 "第1手"
+     * @param sortedPlayers 按 seatOrder 排序后的玩家列表（扣除前）
+     * @param blindPrefills 盲注预扣 Map<playerId, amount>
+     * @param playersAfterBlinds 扣除盲注后的玩家列表（用于获取 balanceAfter）
+     * @param blindsState 盲注状态（判断谁是 SB / BB）
+     * @param now         时间戳
+     */
+    private fun buildBlindLogs(
+        handId: String,
+        sortedPlayers: List<PlayerState>,
+        blindPrefills: Map<String, Int>,
+        playersAfterBlinds: List<PlayerState>,
+        blindsState: BlindsState,
+        now: Long
+    ): List<ChipTransaction> = buildList {
+        blindPrefills.entries
+            .sortedBy { (pid, _) -> sortedPlayers.indexOfFirst { it.id == pid } }
+            .forEach { (pid, amount) ->
+                if (amount <= 0) return@forEach
+                val player = sortedPlayers.firstOrNull { it.id == pid } ?: return@forEach
+                val playerAfter = playersAfterBlinds.firstOrNull { it.id == pid } ?: return@forEach
+                val seatIdx = sortedPlayers.indexOfFirst { it.id == pid }
+                val role = when (seatIdx) {
+                    blindsState.smallBlindIndex -> "小盲"
+                    blindsState.bigBlindIndex  -> "大盲"
+                    else                        -> "盲注"
+                }
+                add(
+                    ChipTransaction(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = now,
+                        handId = handId,
+                        playerId = pid,
+                        playerName = player.name,
+                        amount = -amount,
+                        type = TransactionType.BLIND_DEDUCTION,
+                        note = "扣除${role}",
+                        balanceAfter = playerAfter.chips
+                    )
+                )
+            }
+    }
+
     /** 房主点击"开始游戏" */
     fun startGame() {
         val state = _uiState.value
@@ -761,6 +806,18 @@ class TableViewModel(
         }
         val firstName = playersAfterBlinds.sortedBy { it.seatOrder }.firstOrNull { it.id == firstTurn }?.name ?: "?"
 
+        // 记录盲注扣除日志
+        val blindLogs = if (state.blindsEnabled) {
+            buildBlindLogs(
+                handId = "第${state.handCounter}手",
+                sortedPlayers = state.players.sortedBy { it.seatOrder },
+                blindPrefills = blindPrefills,
+                playersAfterBlinds = playersAfterBlinds,
+                blindsState = blinds,
+                now = System.currentTimeMillis()
+            )
+        } else emptyList()
+
         _uiState.update {
             it.copy(
                 screen = ScreenState.GAME,
@@ -768,13 +825,14 @@ class TableViewModel(
                 players = playersAfterBlinds,
                 blindsState = blinds,
                 blindContributions = blindPrefills,
-                contributionInputs = emptyMap(), // 总投入从空开始，盲注仅在 roundContributions
+                contributionInputs = emptyMap(),
                 currentRound = BettingRound.PRE_FLOP,
                 currentTurnPlayerId = firstTurn,
                 roundContributions = roundContribs,
                 actedPlayerIds = emptySet(),
                 foldedPlayerIds = emptySet(),
                 selectedWinnerIds = emptySet(),
+                logs = (state.logs + blindLogs).takeLast(500),
                 info = "翻牌前 - $firstName 行动 | Hand #${state.handCounter}"
             )
         }
@@ -875,6 +933,17 @@ class TableViewModel(
             val blindPrefills = blindsManager.calculateBlindPrefills(playersAfterSettle, newBlinds)
             // 盲注立即扣除
             val playersAfterBlinds = blindsManager.deductBlinds(playersAfterSettle, blindPrefills)
+
+            // 记录下一手盲注扣除日志
+            val blindLogs = buildBlindLogs(
+                handId = "第${nextHandCounter}手",
+                sortedPlayers = playersAfterSettle.sortedBy { it.seatOrder },
+                blindPrefills = blindPrefills,
+                playersAfterBlinds = playersAfterBlinds,
+                blindsState = newBlinds,
+                now = System.currentTimeMillis()
+            )
+            logsAfterSettle = (logsAfterSettle + blindLogs).takeLast(500)
 
             // 设置下一手的翻牌前
             val tmpState = state.copy(

@@ -2554,19 +2554,36 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
                         sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
                             ?: tx.playerId.take(6)
                     }
-                    val bg = when (tx.type) {
-                        com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT -> Color(0xFFE8F5E9)
-                        com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION -> Color(0xFFFFF9C4)
-                        else -> Color.Transparent
+                    val isBlind = tx.type == com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION
+                    val isWin   = tx.type == com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT
+                    val bg = when {
+                        isWin   -> Color(0xFFE8F5E9)
+                        isBlind -> Color(0xFFFFF9C4)
+                        else    -> Color(0xFFF5F5F5)
                     }
-                    Text(
-                        "[$time] ${tx.handId} $pName ${tx.note} ${tx.amount} 余额:${tx.balanceAfter}",
+                    val amountText = if (tx.amount >= 0) "+${tx.amount}" else "${tx.amount}"
+                    val amountColor = if (tx.amount >= 0) Color(0xFF2E7D32) else Color(0xFFC62828)
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(bg)
-                            .padding(4.dp),
-                        fontSize = 13.sp
-                    )
+                            .background(bg, shape = RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(time, fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(68.dp))
+                        Text(tx.handId, fontSize = 11.sp, color = Color(0xFF5C6BC0),
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.width(46.dp))
+                        Text(pName, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f), maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        Text(tx.note, fontSize = 11.sp, color = Color.Gray,
+                            modifier = Modifier.padding(horizontal = 4.dp))
+                        Text(amountText, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                            color = amountColor, modifier = Modifier.width(52.dp),
+                            textAlign = TextAlign.End)
+                        Text("→${tx.balanceAfter}", fontSize = 11.sp, color = Color.Gray,
+                            modifier = Modifier.padding(start = 4.dp))
+                    }
                 }
             }
         }
