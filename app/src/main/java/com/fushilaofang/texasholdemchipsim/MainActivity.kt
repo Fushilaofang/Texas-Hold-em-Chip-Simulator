@@ -76,6 +76,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -1305,29 +1307,145 @@ private fun GameScreen(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
-                val tableW = size.width * 0.88f
-                val tableH = size.height * 0.72f
+                val tableW = size.width * 0.86f
+                val tableH = size.height * 0.68f
+                val cornerR = tableH / 2f  // 圆槽形：半径 = 短边/2，两端为半圆
 
-                // 外圈阴影
-                drawOval(
-                    color = Color(0x22000000),
-                    topLeft = Offset(cx - tableW / 2f + 4f, cy - tableH / 2f + 6f),
-                    size = Size(tableW, tableH)
+                // 用 Path 绘制圆槽形（Stadium/Track 形状）
+                fun stadiumPath(left: Float, top: Float, w: Float, h: Float): Path {
+                    val r = h / 2f
+                    return Path().apply {
+                        moveTo(left + r, top)
+                        lineTo(left + w - r, top)
+                        arcTo(
+                            rect = androidx.compose.ui.geometry.Rect(
+                                Offset(left + w - 2 * r, top), Size(2 * r, h)
+                            ),
+                            startAngleDegrees = -90f, sweepAngleDegrees = 180f,
+                            forceMoveTo = false
+                        )
+                        lineTo(left + r, top + h)
+                        arcTo(
+                            rect = androidx.compose.ui.geometry.Rect(
+                                Offset(left, top), Size(2 * r, h)
+                            ),
+                            startAngleDegrees = 90f, sweepAngleDegrees = 180f,
+                            forceMoveTo = false
+                        )
+                        close()
+                    }
+                }
+
+                val tableL = cx - tableW / 2f
+                val tableT = cy - tableH / 2f
+
+                // 阴影
+                drawPath(
+                    path = stadiumPath(tableL + 4f, tableT + 6f, tableW, tableH),
+                    color = Color(0x28000000)
                 )
                 // 桌面主体
-                drawOval(
-                    color = Color(0xFFF5F0E8),
-                    topLeft = Offset(cx - tableW / 2f, cy - tableH / 2f),
-                    size = Size(tableW, tableH)
+                val tablePath = stadiumPath(tableL, tableT, tableW, tableH)
+                drawPath(path = tablePath, color = Color(0xFFF5F0E8))
+
+                // -------- 装饰花纹（保持原色调）--------
+
+                // 1. 内圈描边（内缩 12dp 的相似圆槽形）
+                val innerInset = 14f
+                val innerPath = stadiumPath(
+                    tableL + innerInset, tableT + innerInset,
+                    tableW - innerInset * 2, tableH - innerInset * 2
                 )
-                // 内圈线
-                val innerW = tableW * 0.88f
-                val innerH = tableH * 0.82f
-                drawOval(
-                    color = Color(0xFFE8E0D0),
-                    topLeft = Offset(cx - innerW / 2f, cy - innerH / 2f),
-                    size = Size(innerW, innerH),
-                    style = Stroke(width = 2f)
+                drawPath(
+                    path = innerPath,
+                    color = Color(0xFFE0D8C8),
+                    style = Stroke(width = 1.8f)
+                )
+
+                // 2. 再内圈细线（赌场桌常见双线圈）
+                val inner2Inset = 22f
+                drawPath(
+                    path = stadiumPath(
+                        tableL + inner2Inset, tableT + inner2Inset,
+                        tableW - inner2Inset * 2, tableH - inner2Inset * 2
+                    ),
+                    color = Color(0xFFD8CEBA),
+                    style = Stroke(width = 1f)
+                )
+
+                // 3. 横向中线（淡色分隔线）
+                drawLine(
+                    color = Color(0x30A09070),
+                    start = Offset(tableL + cornerR, cy),
+                    end = Offset(tableL + tableW - cornerR, cy),
+                    strokeWidth = 1f
+                )
+
+                // 4. 菱形网格装饰（仅在矩形中段内绘制，淡色）
+                val gridColor = Color(0x18A09070)
+                val gridStep = 28f
+                val rectLeft = tableL + cornerR
+                val rectRight = tableL + tableW - cornerR
+                val rectTop = tableT + 8f
+                val rectBottom = tableT + tableH - 8f
+                var xi = rectLeft
+                while (xi <= rectRight) {
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(xi, rectTop),
+                        end = Offset(xi, rectBottom),
+                        strokeWidth = 0.8f
+                    )
+                    xi += gridStep
+                }
+                var yi = rectTop
+                while (yi <= rectBottom) {
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(rectLeft, yi),
+                        end = Offset(rectRight, yi),
+                        strokeWidth = 0.8f
+                    )
+                    yi += gridStep
+                }
+
+                // 5. 两端半圆扇形装饰（放射线）
+                val fanColor = Color(0x15907050)
+                val fanLineCount = 8
+                // 左端半圆
+                val leftCircleCx = tableL + cornerR
+                for (i in 0 until fanLineCount) {
+                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1))) - Math.PI / 2
+                    drawLine(
+                        color = fanColor,
+                        start = Offset(leftCircleCx, cy),
+                        end = Offset(
+                            (leftCircleCx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
+                            (cy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
+                        ),
+                        strokeWidth = 1f
+                    )
+                }
+                // 右端半圆
+                val rightCircleCx = tableL + tableW - cornerR
+                for (i in 0 until fanLineCount) {
+                    val angle = (Math.PI * (i.toDouble() / (fanLineCount - 1))) + Math.PI / 2
+                    drawLine(
+                        color = fanColor,
+                        start = Offset(rightCircleCx, cy),
+                        end = Offset(
+                            (rightCircleCx + cornerR * 0.9f * kotlin.math.cos(angle)).toFloat(),
+                            (cy + cornerR * 0.9f * kotlin.math.sin(angle)).toFloat()
+                        ),
+                        strokeWidth = 1f
+                    )
+                }
+
+                // 6. 外框描边
+                drawPath(
+                    path = tablePath,
+                    color = Color(0xFFCEC4B0),
+                    style = Stroke(width = 2.5f)
                 )
             }
 
