@@ -98,6 +98,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fushilaofang.texasholdemchipsim.blinds.BlindsConfig
 import com.fushilaofang.texasholdemchipsim.model.PlayerState
+import com.fushilaofang.texasholdemchipsim.model.TransactionType
 import com.fushilaofang.texasholdemchipsim.network.DiscoveredRoom
 import com.fushilaofang.texasholdemchipsim.ui.BettingRound
 import com.fushilaofang.texasholdemchipsim.ui.ScreenState
@@ -2539,6 +2540,31 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
 
         Spacer(Modifier.height(8.dp))
 
+        // 图例
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                "盲注" to Color(0xFFF57F17),
+                "下注" to Color(0xFFE65100),
+                "跟注" to Color(0xFF1565C0),
+                "加注" to Color(0xFF6A1B9A),
+                "全压" to Color(0xFFB71C1C),
+                "弃牌" to Color(0xFF757575),
+                "赢"   to Color(0xFF2E7D32)
+            ).forEach { (label, color) ->
+                Box(
+                    modifier = Modifier
+                        .background(color.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                        .border(0.5.dp, color.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(label, fontSize = 9.sp, color = color, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
         if (state.logs.isEmpty()) {
             Text(
                 "暂无记录",
@@ -2547,42 +2573,90 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth()
             )
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(state.logs.takeLast(50).reversed(), key = { it.id }) { tx ->
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                items(state.logs.takeLast(200).reversed(), key = { it.id }) { tx ->
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
                     val pName = tx.playerName.ifBlank {
-                        sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
-                            ?: tx.playerId.take(6)
+                        sortedPlayers.firstOrNull { it.id == tx.playerId }?.name ?: tx.playerId.take(6)
                     }
-                    val isBlind = tx.type == com.fushilaofang.texasholdemchipsim.model.TransactionType.BLIND_DEDUCTION
-                    val isWin   = tx.type == com.fushilaofang.texasholdemchipsim.model.TransactionType.WIN_PAYOUT
-                    val bg = when {
-                        isWin   -> Color(0xFFE8F5E9)
-                        isBlind -> Color(0xFFFFF9C4)
-                        else    -> Color(0xFFF5F5F5)
+
+                    // 操作类型 → 显示文字 + 主题色
+                    val (typeLabel, typeColor) = when (tx.type) {
+                        TransactionType.BLIND_DEDUCTION -> "盲注" to Color(0xFFF57F17)
+                        TransactionType.BET             -> "下注" to Color(0xFFE65100)
+                        TransactionType.CALL            -> "跟注" to Color(0xFF1565C0)
+                        TransactionType.RAISE           -> "加注" to Color(0xFF6A1B9A)
+                        TransactionType.ALL_IN          -> "全压" to Color(0xFFB71C1C)
+                        TransactionType.CHECK           -> "过牌" to Color(0xFF9E9E9E)
+                        TransactionType.FOLD            -> "弃牌" to Color(0xFF757575)
+                        TransactionType.WIN_PAYOUT      -> "赢"   to Color(0xFF2E7D32)
+                        TransactionType.CONTRIBUTION    -> "投入" to Color(0xFF78909C)
                     }
-                    val amountText = if (tx.amount >= 0) "+${tx.amount}" else "${tx.amount}"
+
+                    val bgColor = when (tx.type) {
+                        TransactionType.WIN_PAYOUT      -> Color(0xFFE8F5E9)
+                        TransactionType.BLIND_DEDUCTION -> Color(0xFFFFF8E1)
+                        TransactionType.ALL_IN          -> Color(0xFFFFEBEE)
+                        TransactionType.RAISE           -> Color(0xFFF3E5F5)
+                        TransactionType.FOLD            -> Color(0xFFF5F5F5)
+                        TransactionType.CHECK           -> Color(0xFFFAFAFA)
+                        else                            -> Color(0xFFF9F9F9)
+                    }
+
+                    val showAmount = tx.type != TransactionType.CHECK && tx.type != TransactionType.FOLD
+                    val amountText = when {
+                        !showAmount       -> ""
+                        tx.amount >= 0    -> "+${tx.amount}"
+                        else              -> "${tx.amount}"
+                    }
                     val amountColor = if (tx.amount >= 0) Color(0xFF2E7D32) else Color(0xFFC62828)
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(bg, shape = RoundedCornerShape(6.dp))
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                            .background(bgColor, shape = RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(time, fontSize = 11.sp, color = Color.Gray, modifier = Modifier.width(68.dp))
-                        Text(tx.handId, fontSize = 11.sp, color = Color(0xFF5C6BC0),
-                            fontWeight = FontWeight.SemiBold, modifier = Modifier.width(46.dp))
+                        // 时间
+                        Text(time, fontSize = 10.sp, color = Color(0xFF9E9E9E),
+                            modifier = Modifier.width(56.dp))
+                        // 手号
+                        Text(tx.handId, fontSize = 10.sp, color = Color(0xFF5C6BC0),
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.width(40.dp))
+                        // 类型徽标
+                        Box(
+                            modifier = Modifier
+                                .background(typeColor.copy(alpha = 0.15f), RoundedCornerShape(4.dp))
+                                .border(0.5.dp, typeColor.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .width(28.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(typeLabel, fontSize = 9.sp, color = typeColor, fontWeight = FontWeight.Bold,
+                                maxLines = 1)
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        // 玩家名
                         Text(pName, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                            modifier = Modifier.width(56.dp), maxLines = 1,
+                            overflow = TextOverflow.Ellipsis)
+                        // 操作说明（note 已含圈次信息，如 [翻牌] 加注至60）
+                        Text(tx.note, fontSize = 10.sp, color = Color(0xFF616161),
                             modifier = Modifier.weight(1f), maxLines = 1,
                             overflow = TextOverflow.Ellipsis)
-                        Text(tx.note, fontSize = 11.sp, color = Color.Gray,
-                            modifier = Modifier.padding(horizontal = 4.dp))
-                        Text(amountText, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                            color = amountColor, modifier = Modifier.width(52.dp),
+                        // 金额
+                        if (showAmount) {
+                            Text(amountText, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                color = amountColor, modifier = Modifier.width(48.dp),
+                                textAlign = TextAlign.End)
+                        } else {
+                            Spacer(Modifier.width(48.dp))
+                        }
+                        // 结余
+                        Text("→${tx.balanceAfter}", fontSize = 10.sp, color = Color(0xFF9E9E9E),
+                            modifier = Modifier.padding(start = 4.dp).width(50.dp),
                             textAlign = TextAlign.End)
-                        Text("→${tx.balanceAfter}", fontSize = 11.sp, color = Color.Gray,
-                            modifier = Modifier.padding(start = 4.dp))
                     }
                 }
             }

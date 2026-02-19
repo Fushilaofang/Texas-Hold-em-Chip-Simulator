@@ -600,6 +600,15 @@ class TableViewModel(
 
     // ==================== 投入/弃牌处理（HOST 逻辑，服务端和本地共用） ====================
 
+    /** 将 BettingRound 转为中文显示名称 */
+    private fun BettingRound.label() = when (this) {
+        BettingRound.PRE_FLOP -> "翻前"
+        BettingRound.FLOP     -> "翻牌"
+        BettingRound.TURN     -> "转牌"
+        BettingRound.RIVER    -> "河牌"
+        BettingRound.SHOWDOWN -> "摩牌"
+    }
+
     /**
      * 处理投入请求（仅 HOST 调用）
      * @param playerId 玩家 ID
@@ -615,12 +624,33 @@ class TableViewModel(
         val newRoundContrib = currentRoundContrib + amount
         val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
         val isRaise = newRoundContrib > currentMaxBet
+        val isAllIn = amount > 0 && player.chips <= amount  // 投入后筹码归零
+        val rl = state.currentRound.label()
+
+        val (actionType, actionNote) = when {
+            amount == 0           -> Pair(TransactionType.CHECK, "[$rl] 过牌")
+            isAllIn               -> Pair(TransactionType.ALL_IN, "[$rl] 全压 $amount")
+            isRaise && currentMaxBet == 0 -> Pair(TransactionType.BET,   "[$rl] 下注 $amount")
+            isRaise               -> Pair(TransactionType.RAISE,  "[$rl] 加注至 $newRoundContrib")
+            else                  -> Pair(TransactionType.CALL,   "[$rl] 跟注 $amount")
+        }
+
+        val actionLog = ChipTransaction(
+            id = UUID.randomUUID().toString(),
+            timestamp = System.currentTimeMillis(),
+            handId = "第${state.handCounter}手",
+            playerId = playerId,
+            playerName = player.name,
+            amount = if (amount > 0) -amount else 0,
+            type = actionType,
+            note = actionNote,
+            balanceAfter = player.chips - amount
+        )
 
         val playerName = player.name
         _uiState.update {
             val newRoundContribs = it.roundContributions + (playerId to newRoundContrib)
             val newActed = if (isRaise) setOf(playerId) else it.actedPlayerIds + playerId
-            // 实时从筹码中扣除本次投入
             val updatedPlayers = it.players.map { p ->
                 if (p.id == playerId && amount > 0) p.copy(chips = p.chips - amount) else p
             }
@@ -628,6 +658,7 @@ class TableViewModel(
                 players = updatedPlayers,
                 roundContributions = newRoundContribs,
                 actedPlayerIds = newActed,
+                logs = (it.logs + actionLog).takeLast(500),
                 info = "$playerName 投入本轮: $newRoundContrib${if (isRaise) " (加注)" else ""}"
             )
         }
@@ -641,11 +672,24 @@ class TableViewModel(
         val state = _uiState.value
         if (state.mode != TableMode.HOST) return
 
-        val playerName = state.players.firstOrNull { it.id == playerId }?.name ?: "?"
+        val player = state.players.firstOrNull { it.id == playerId } ?: return
+        val rl = state.currentRound.label()
+        val foldLog = ChipTransaction(
+            id = UUID.randomUUID().toString(),
+            timestamp = System.currentTimeMillis(),
+            handId = "第${state.handCounter}手",
+            playerId = playerId,
+            playerName = player.name,
+            amount = 0,
+            type = TransactionType.FOLD,
+            note = "[$rl] 弃牌",
+            balanceAfter = player.chips
+        )
         _uiState.update {
             it.copy(
                 foldedPlayerIds = it.foldedPlayerIds + playerId,
-                info = "$playerName 已弃牌"
+                logs = (it.logs + foldLog).takeLast(500),
+                info = "${player.name} 已弃牌"
             )
         }
         advanceTurnOrRound()
@@ -913,23 +957,12 @@ class TableViewModel(
                 timestamp = now
             )
 
-            // CONTRIBUTION 日志去除盲注部分，避免与 BLIND_DEDUCTION 重复计算
-            // 盲注已在本手开始时由 BLIND_DEDUCTION 单独记录，此处仅展示额外投注
-            val blindContribMap = state.blindContributions
-            val adjustedTransactions = result.transactions.mapNotNull { tx ->
-                if (tx.type == TransactionType.CONTRIBUTION) {
-                    val blindPortion = blindContribMap[tx.playerId] ?: 0
-                    val extraAmount = tx.amount + blindPortion  // amount 为负，blindPortion 为正
-                    when {
-                        extraAmount == 0 -> null  // 投入全部来自盲注，已在 BLIND_DEDUCTION 记录，无须重复
-                        blindPortion > 0 -> tx.copy(amount = extraAmount, note = "追加投注")
-                        else -> tx
-                    }
-                } else tx
-            }
+            // 投注过程已由 processContribution/processFold 实时记录
+            // 结算时只记录赢家获得筹码，避免重复
+            val winLogs = result.transactions.filter { it.type == TransactionType.WIN_PAYOUT }
 
             playersAfterSettle = result.updatedPlayers
-            logsAfterSettle = (state.logs + adjustedTransactions).takeLast(500)
+            logsAfterSettle = (state.logs + winLogs).takeLast(500)
             sidePots = if (state.sidePotEnabled) result.sidePots else result.sidePots.take(1)
             settleInfo = if (state.sidePotEnabled && result.sidePots.size > 1) {
                 result.sidePots.joinToString(" | ") { "${it.label}:${it.amount}" }
