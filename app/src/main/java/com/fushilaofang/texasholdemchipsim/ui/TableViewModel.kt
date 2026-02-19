@@ -1464,6 +1464,8 @@ class TableViewModel(
             putString("session_round_contribs", sessionJson.encodeToString(state.roundContributions))
             putString("session_acted_ids", sessionJson.encodeToString(state.actedPlayerIds.toList()))
             putString("session_folded_ids", sessionJson.encodeToString(state.foldedPlayerIds.toList()))
+            // 当前房间内产生的日志（不含历史房间记录）
+            putString("session_logs", sessionJson.encodeToString(state.logs))
             apply()
         }
     }
@@ -1475,7 +1477,8 @@ class TableViewModel(
             "session_blinds_enabled", "session_side_pot_enabled", "session_players", "session_blinds_state",
             "session_contributions", "session_blind_contribs",
             "session_current_round", "session_current_turn",
-            "session_round_contribs", "session_acted_ids", "session_folded_ids"
+            "session_round_contribs", "session_acted_ids", "session_folded_ids",
+            "session_logs"
         )
         prefs.edit().apply {
             keys.forEach { remove(it) }
@@ -1570,7 +1573,10 @@ class TableViewModel(
                     foldedPlayerIds = foldedPlayerIds,
                     selectedWinnerIds = emptySet(),
                     lastSidePots = emptyList(),
-                    logs = repository.load().takeLast(500),
+                    logs = try {
+                        val s = prefs.getString("session_logs", "[]") ?: "[]"
+                        sessionJson.decodeFromString<List<ChipTransaction>>(s)
+                    } catch (_: Exception) { emptyList() },
                     canRejoin = false,
                     // 标记所有非房主玩家为掉线
                     disconnectedPlayerIds = players.filter { p -> p.id != selfId }.map { p -> p.id }.toSet(),
