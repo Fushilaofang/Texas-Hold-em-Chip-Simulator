@@ -566,6 +566,7 @@ class TableViewModel(
             }
         }
         syncToClients()
+        saveSession()
     }
 
     /** 当前轮行动后，推进到下一位玩家或下一轮 */
@@ -595,6 +596,7 @@ class TableViewModel(
                 )
             }
             syncToClients()
+            saveSession()
         }
     }
 
@@ -606,7 +608,7 @@ class TableViewModel(
         BettingRound.FLOP     -> "翻牌"
         BettingRound.TURN     -> "转牌"
         BettingRound.RIVER    -> "河牌"
-        BettingRound.SHOWDOWN -> "摩牌"
+        BettingRound.SHOWDOWN -> "摊牌"
     }
 
     /**
@@ -1456,6 +1458,12 @@ class TableViewModel(
             putString("session_blinds_state", sessionJson.encodeToString(state.blindsState))
             putString("session_contributions", sessionJson.encodeToString(state.contributionInputs))
             putString("session_blind_contribs", sessionJson.encodeToString(state.blindContributions))
+            // 游戏进行中的轮次状态
+            putString("session_current_round", state.currentRound.name)
+            putString("session_current_turn", state.currentTurnPlayerId)
+            putString("session_round_contribs", sessionJson.encodeToString(state.roundContributions))
+            putString("session_acted_ids", sessionJson.encodeToString(state.actedPlayerIds.toList()))
+            putString("session_folded_ids", sessionJson.encodeToString(state.foldedPlayerIds.toList()))
             apply()
         }
     }
@@ -1465,7 +1473,9 @@ class TableViewModel(
             "session_mode", "session_self_id", "session_self_name", "session_table_name",
             "session_host_ip", "session_game_started", "session_hand_counter",
             "session_blinds_enabled", "session_side_pot_enabled", "session_players", "session_blinds_state",
-            "session_contributions", "session_blind_contribs"
+            "session_contributions", "session_blind_contribs",
+            "session_current_round", "session_current_turn",
+            "session_round_contribs", "session_acted_ids", "session_folded_ids"
         )
         prefs.edit().apply {
             keys.forEach { remove(it) }
@@ -1517,6 +1527,25 @@ class TableViewModel(
             sessionJson.decodeFromString(s)
         } catch (_: Exception) { emptyMap() }
 
+        // 恢复游戏进行中的轮次状态
+        val currentRound = try {
+            val s = prefs.getString("session_current_round", null)
+            s?.let { BettingRound.valueOf(it) } ?: BettingRound.PRE_FLOP
+        } catch (_: Exception) { BettingRound.PRE_FLOP }
+        val currentTurnPlayerId = prefs.getString("session_current_turn", "") ?: ""
+        val roundContributions: Map<String, Int> = try {
+            val s = prefs.getString("session_round_contribs", "{}") ?: "{}"
+            sessionJson.decodeFromString(s)
+        } catch (_: Exception) { emptyMap() }
+        val actedPlayerIds: Set<String> = try {
+            val s = prefs.getString("session_acted_ids", "[]") ?: "[]"
+            sessionJson.decodeFromString<List<String>>(s).toSet()
+        } catch (_: Exception) { emptySet() }
+        val foldedPlayerIds: Set<String> = try {
+            val s = prefs.getString("session_folded_ids", "[]") ?: "[]"
+            sessionJson.decodeFromString<List<String>>(s).toSet()
+        } catch (_: Exception) { emptySet() }
+
         if (mode == TableMode.HOST) {
             // 房主重新加入：恢复状态 + 重启服务端 + 重启广播
             _uiState.update {
@@ -1534,6 +1563,11 @@ class TableViewModel(
                     sidePotEnabled = sidePotEnabled,
                     contributionInputs = contributions,
                     blindContributions = blindContributions,
+                    currentRound = currentRound,
+                    currentTurnPlayerId = currentTurnPlayerId,
+                    roundContributions = roundContributions,
+                    actedPlayerIds = actedPlayerIds,
+                    foldedPlayerIds = foldedPlayerIds,
                     selectedWinnerIds = emptySet(),
                     lastSidePots = emptyList(),
                     logs = repository.load().takeLast(500),
