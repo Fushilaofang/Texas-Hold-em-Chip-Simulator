@@ -20,6 +20,7 @@ import com.fushilaofang.texasholdemchipsim.network.RoomAdvertiser
 import com.fushilaofang.texasholdemchipsim.network.RoomScanner
 import com.fushilaofang.texasholdemchipsim.settlement.SettlementEngine
 import com.fushilaofang.texasholdemchipsim.settlement.SidePot
+import com.fushilaofang.texasholdemchipsim.util.DeviceIdManager
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -110,6 +111,9 @@ class TableViewModel(
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("user_settings", Context.MODE_PRIVATE)
     private val sessionJson = Json { ignoreUnknownKeys = true }
+    
+    /** 设备唯一ID */
+    private val deviceId: String = DeviceIdManager.getDeviceId(context.applicationContext)
 
     /** 持有 CPU 唤醒锁，防止后台挂起导致心跳断线 */
     private val wakeLock: PowerManager.WakeLock? =
@@ -298,7 +302,8 @@ class TableViewModel(
             chips = buyIn,
             seatOrder = 0,
             isReady = true, // 房主默认准备
-            avatarBase64 = _uiState.value.savedAvatarBase64
+            avatarBase64 = _uiState.value.savedAvatarBase64,
+            deviceId = deviceId
         )
         val initialBlinds = blindsManager.initialize(1, blindsConfig)
 
@@ -352,7 +357,7 @@ class TableViewModel(
             )
         }
 
-        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, ::handleClientEvent)
+        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, deviceId, ::handleClientEvent)
         acquireWakeLock()
     }
 
@@ -1616,7 +1621,7 @@ class TableViewModel(
                 )
             }
 
-            client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, ::handleClientEvent)
+            client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, deviceId, ::handleClientEvent)
             acquireWakeLock()
         }
     }

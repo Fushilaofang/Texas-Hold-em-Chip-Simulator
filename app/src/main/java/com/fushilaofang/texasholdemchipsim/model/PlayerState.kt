@@ -9,5 +9,7 @@ data class PlayerState(
     val chips: Int,
     val seatOrder: Int,
     val isReady: Boolean = false,
-    val avatarBase64: String = ""
+    val avatarBase64: String = "",
+    /** 设备唯一标识符，用于将玩家账号与设备绑定 */
+    val deviceId: String = ""
 )

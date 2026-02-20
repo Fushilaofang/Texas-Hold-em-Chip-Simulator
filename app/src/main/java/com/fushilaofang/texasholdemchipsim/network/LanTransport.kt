@@ -374,15 +374,36 @@ class LanTableServer(
                                 socket.close()
                                 return@launch
                             }
-                            val playerId = UUID.randomUUID().toString()
+
+                            // 检查是否已经存在该设备ID的玩家
+                            val existingPlayer = hostPlayersProvider().firstOrNull { it.deviceId == msg.deviceId }
+                            
+                            val playerId: String
+                            val seatOrder: Int
+                            val joined: PlayerState
+                            
+                            if (existingPlayer != null) {
+                                // 设备重新连接：重用已有的playerId，但更新名字和筹码
+                                playerId = existingPlayer.id
+                                seatOrder = existingPlayer.seatOrder
+                                joined = existingPlayer.copy(
+                                    name = msg.playerName,
+                                    chips = msg.buyIn
+                                )
+                            } else {
+                                // 新设备加入：生成新的playerId
+                                playerId = UUID.randomUUID().toString()
+                                seatOrder = hostPlayersProvider().size
+                                joined = PlayerState(
+                                    id = playerId,
+                                    name = msg.playerName,
+                                    chips = msg.buyIn,
+                                    seatOrder = seatOrder,
+                                    deviceId = msg.deviceId
+                                )
+                            }
+                            
                             assignedId = playerId
-                            val seatOrder = hostPlayersProvider().size
-                            val joined = PlayerState(
-                                id = playerId,
-                                name = msg.playerName,
-                                chips = msg.buyIn,
-                                seatOrder = seatOrder
-                            )
                             onPlayerJoined(joined)
 
                             val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = playerId)
@@ -461,6 +482,7 @@ class LanTableClient(
     private var lastHostIp: String? = null
     private var lastPlayerName: String? = null
     private var lastBuyIn: Int = 0
+    private var lastDeviceId: String? = null
     private var assignedPlayerId: String? = null
     private var reconnecting = false
     private var shouldReconnect = true
@@ -494,22 +516,24 @@ class LanTableClient(
     @Volatile
     private var writer: BufferedWriter? = null
 
-    fun connect(hostIp: String, playerName: String, buyIn: Int, onEvent: (Event) -> Unit) {
+    fun connect(hostIp: String, playerName: String, buyIn: Int, deviceId: String, onEvent: (Event) -> Unit) {
         disconnect()
         lastHostIp = hostIp
         lastPlayerName = playerName
         lastBuyIn = buyIn
+        lastDeviceId = deviceId
         assignedPlayerId = null
         reconnecting = false
         shouldReconnect = true
 
-        doConnect(hostIp, playerName, buyIn, isReconnect = false, onEvent = onEvent)
+        doConnect(hostIp, playerName, buyIn, deviceId, isReconnect = false, onEvent = onEvent)
     }
 
     private fun doConnect(
         hostIp: String,
         playerName: String,
         buyIn: Int,
+        deviceId: String,
         isReconnect: Boolean,
         onEvent: (Event) -> Unit
     ) {
@@ -530,14 +554,15 @@ class LanTableClient(
                     // 发送重连请求
                     val reconMsg = NetworkMessage.Reconnect(
                         playerId = assignedPlayerId!!,
-                        playerName = playerName
+                        playerName = playerName,
+                        deviceId = deviceId
                     )
                     w.write(json.encodeToString(NetworkMessage.serializer(), reconMsg))
                     w.newLine()
                     w.flush()
                 } else {
                     // 发送首次加入请求
-                    val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn)
+                    val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn, deviceId = deviceId)
                     w.write(json.encodeToString(NetworkMessage.serializer(), join))
                     w.newLine()
                     w.flush()
@@ -661,7 +686,7 @@ class LanTableClient(
                 if (reachable) {
                     // 房主已上线，执行完整重连
                     reconnecting = false
-                    doConnect(ip, name, lastBuyIn, isReconnect = true, onEvent = onEvent)
+                    doConnect(ip, name, lastBuyIn, lastDeviceId ?: "", isReconnect = true, onEvent = onEvent)
                     return@launch
                 }
             }
@@ -675,15 +700,16 @@ class LanTableClient(
     /**
      * 从首页手动重连（已有 playerId，发送 Reconnect 消息）
      */
-    fun reconnect(hostIp: String, playerId: String, playerName: String, buyIn: Int, onEvent: (Event) -> Unit) {
+    fun reconnect(hostIp: String, playerId: String, playerName: String, buyIn: Int, deviceId: String, onEvent: (Event) -> Unit) {
         disconnect()
         lastHostIp = hostIp
         lastPlayerName = playerName
         lastBuyIn = buyIn
+        lastDeviceId = deviceId
         assignedPlayerId = playerId
         reconnecting = false
         shouldReconnect = true
-        doConnect(hostIp, playerName, buyIn, isReconnect = true, onEvent = onEvent)
+        doConnect(hostIp, playerName, buyIn, deviceId, isReconnect = true, onEvent = onEvent)
     }
 
     fun sendContribution(playerId: String, amount: Int) {
