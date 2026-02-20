@@ -2576,9 +2576,9 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 items(state.logs.takeLast(200).reversed(), key = { it.id }) { tx ->
                     val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
-                    val pName = tx.playerName.ifBlank {
-                        sortedPlayers.firstOrNull { it.id == tx.playerId }?.name ?: tx.playerId.take(6)
-                    }
+                    // 优先使用当前玩家列表中的最新昵称，玩家已离开时才回退到记录里存档的名字
+                    val pName = sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
+                        ?: tx.playerName.ifBlank { tx.playerId.take(6) }
 
                     // 操作类型 → 显示文字 + 主题色
                     val (typeLabel, typeColor) = when (tx.type) {
