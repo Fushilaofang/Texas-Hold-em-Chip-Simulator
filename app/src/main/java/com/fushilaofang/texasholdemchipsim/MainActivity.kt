@@ -1914,10 +1914,12 @@ private fun GameScreen(
                                 )
                             ) { Text("弃牌", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
 
-                            // 过牌/跟注按钮
+                            // 过牌/跟注/All-In 按钮
                             val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
                             val myRoundContrib = state.roundContributions[state.selfId] ?: 0
                             val callNeeded = currentMaxBet - myRoundContrib
+                            val myChips = sortedPlayers.firstOrNull { it.id == state.selfId }?.chips ?: 0
+                            val mustAllIn = callNeeded > 0 && myChips <= callNeeded
                             if (callNeeded <= 0) {
                                 // 可以过牌
                                 Button(
@@ -1929,6 +1931,17 @@ private fun GameScreen(
                                         disabledContainerColor = Color(0xFFBDBDBD)
                                     )
                                 ) { Text("过牌", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                            } else if (mustAllIn) {
+                                // 筹码不足以完整跟注，只能 All-In
+                                Button(
+                                    onClick = { if (canAct) onSubmitContribution(myChips) },
+                                    enabled = canAct,
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFB71C1C),
+                                        disabledContainerColor = Color(0xFFBDBDBD)
+                                    )
+                                ) { Text("All-In!", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
                             } else {
                                 // 需要跟注
                                 Button(
