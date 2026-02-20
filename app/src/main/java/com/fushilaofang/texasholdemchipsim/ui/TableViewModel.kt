@@ -20,6 +20,7 @@ import com.fushilaofang.texasholdemchipsim.network.RoomAdvertiser
 import com.fushilaofang.texasholdemchipsim.network.RoomScanner
 import com.fushilaofang.texasholdemchipsim.settlement.SettlementEngine
 import com.fushilaofang.texasholdemchipsim.settlement.SidePot
+import com.fushilaofang.texasholdemchipsim.settlement.SidePotCalculator
 import com.fushilaofang.texasholdemchipsim.util.DeviceIdManager
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -540,6 +541,9 @@ class TableViewModel(
 
         if (nextRound == BettingRound.SHOWDOWN || activePlayers.size <= 1 || actionable.size <= 1) {
             // 进入摊牌 或 仅剩一人/只剩 all-in 玩家 → 自动进入 SHOWDOWN
+            // 实时计算本手边池结构，供摊牌阶段展示
+            val showdownContribs = newContribs.mapValues { (_, v) -> v.toIntOrNull() ?: 0 }
+            val showdownSidePots = if (state.sidePotEnabled) SidePotCalculator.buildPots(showdownContribs) else emptyList()
             _uiState.update {
                 it.copy(
                     currentRound = BettingRound.SHOWDOWN,
@@ -547,6 +551,7 @@ class TableViewModel(
                     roundContributions = emptyMap(),
                     actedPlayerIds = emptySet(),
                     contributionInputs = newContribs,
+                    lastSidePots = showdownSidePots,
                     info = "摊牌阶段 - 请标记赢家并结算"
                 )
             }
@@ -892,6 +897,7 @@ class TableViewModel(
                 actedPlayerIds = blindAllInActed,
                 foldedPlayerIds = emptySet(),
                 selectedWinnerIds = emptySet(),
+                lastSidePots = emptyList(),
                 logs = (state.logs + blindLogs).takeLast(500),
                 info = "翻牌前 - $firstName 行动 | Hand #${state.handCounter}"
             )
@@ -1028,7 +1034,7 @@ class TableViewModel(
                     contributionInputs = emptyMap(),
                     selectedWinnerIds = emptySet(),
                     foldedPlayerIds = emptySet(),
-                    lastSidePots = sidePots,
+                    lastSidePots = emptyList(),
                     logs = logsAfterSettle,
                     currentRound = BettingRound.PRE_FLOP,
                     currentTurnPlayerId = firstTurn,
@@ -1064,7 +1070,7 @@ class TableViewModel(
                     contributionInputs = emptyMap(),
                     selectedWinnerIds = emptySet(),
                     foldedPlayerIds = emptySet(),
-                    lastSidePots = sidePots,
+                    lastSidePots = emptyList(),
                     logs = logsAfterSettle,
                     currentRound = BettingRound.PRE_FLOP,
                     currentTurnPlayerId = firstTurn,
