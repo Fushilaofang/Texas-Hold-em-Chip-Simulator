@@ -1862,9 +1862,9 @@ private fun GameScreen(
         // 筹码投入弹窗
         if (showChipDialog) {
             val myPlayer = sortedPlayers.firstOrNull { it.id == state.selfId }
-            val totalPrev = state.contributionInputs[state.selfId]?.toIntOrNull() ?: 0
+            // chips 在每次 processContribution 时已实时扣除，直接取当前剩余筹码即可
+            val maxAvailable = myPlayer?.chips ?: 0
             val myRoundContrib = state.roundContributions[state.selfId] ?: 0
-            val maxAvailable = (myPlayer?.chips ?: 0) - totalPrev - myRoundContrib
             val currentMaxBet = state.roundContributions.values.maxOrNull() ?: 0
             val callAmount = (currentMaxBet - myRoundContrib).coerceAtLeast(0)
             ChipInputDialog(
