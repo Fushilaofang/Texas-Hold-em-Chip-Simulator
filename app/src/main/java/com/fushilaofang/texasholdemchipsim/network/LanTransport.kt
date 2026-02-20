@@ -48,6 +48,8 @@ class LanTableServer(
         data class WinToggleReceived(val playerId: String, val isWinner: Boolean) : Event()
         data class FoldReceived(val playerId: String) : Event()
         data class ProfileUpdateReceived(val playerId: String, val newName: String, val avatarBase64: String) : Event()
+        /** 同一设备以新昵称/头像重新进入房间，应复用原有玩家槽位 */
+        data class PlayerRejoinedByDevice(val playerId: String, val newName: String, val avatarBase64: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -366,82 +368,118 @@ class LanTableServer(
                         }
 
                         is NetworkMessage.JoinRequest -> {
-                            if (gameStartedProvider()) {
-                                val err = NetworkMessage.Error(reason = "游戏已开始，无法加入")
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                            // 先检查是否同一台设备重新进入（此时不限制游戏是否已开始）
+                            val existingByDevice = if (msg.deviceId.isNotBlank()) {
+                                hostPlayersProvider().firstOrNull {
+                                    it.deviceId.isNotBlank() && it.deviceId == msg.deviceId
+                                }
+                            } else null
+
+                            if (existingByDevice != null) {
+                                // 同一设备重新加入：复用原有槽位和 ID
+                                val oldId = existingByDevice.id
+                                assignedId = oldId
+                                synchronized(disconnectedLock) { disconnectedPlayers.remove(oldId) }
+
+                                val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = oldId)
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
                                 writer.newLine()
                                 writer.flush()
-                                socket.close()
-                                return@launch
-                            }
 
-                            // 检查是否已经存在该设备ID的玩家
-                            val existingPlayer = hostPlayersProvider().firstOrNull { it.deviceId == msg.deviceId }
-                            
-                            val playerId: String
-                            val seatOrder: Int
-                            val joined: PlayerState
-                            
-                            if (existingPlayer != null) {
-                                // 设备重新连接：重用已有的playerId，但更新名字和筹码
-                                playerId = existingPlayer.id
-                                seatOrder = existingPlayer.seatOrder
-                                joined = existingPlayer.copy(
-                                    name = msg.playerName,
-                                    chips = msg.buyIn
+                                val sync = NetworkMessage.StateSync(
+                                    players = hostPlayersProvider(),
+                                    handCounter = handCounterProvider(),
+                                    transactions = txProvider().takeLast(50),
+                                    contributions = contributionsProvider(),
+                                    blindsState = blindsStateProvider(),
+                                    blindsEnabled = blindsEnabledProvider(),
+                                    sidePotEnabled = sidePotEnabledProvider(),
+                                    selectedWinnerIds = selectedWinnerIdsProvider(),
+                                    foldedPlayerIds = foldedPlayerIdsProvider(),
+                                    gameStarted = gameStartedProvider(),
+                                    currentRound = currentRoundProvider(),
+                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                    roundContributions = roundContributionsProvider(),
+                                    actedPlayerIds = actedPlayerIdsProvider()
                                 )
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                writer.newLine()
+                                writer.flush()
+
+                                synchronized(clientsLock) {
+                                    clients.remove(oldId)?.let { old ->
+                                        old.readerJob.cancel()
+                                        runCatching { old.socket.close() }
+                                    }
+                                    clients[oldId] = ClientConnection(
+                                        playerId = oldId,
+                                        socket = socket,
+                                        writer = writer,
+                                        readerJob = this.coroutineContext[Job]
+                                            ?: error("missing coroutine job")
+                                    )
+                                }
+
+                                onEvent(Event.PlayerRejoinedByDevice(oldId, msg.playerName, ""))
                             } else {
-                                // 新设备加入：生成新的playerId
-                                playerId = UUID.randomUUID().toString()
-                                seatOrder = hostPlayersProvider().size
-                                joined = PlayerState(
+                                // 全新玩家加入：游戏进行中不允许
+                                if (gameStartedProvider()) {
+                                    val err = NetworkMessage.Error(reason = "游戏已开始，无法加入")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    writer.newLine()
+                                    writer.flush()
+                                    socket.close()
+                                    return@launch
+                                }
+                                val playerId = UUID.randomUUID().toString()
+                                assignedId = playerId
+                                val seatOrder = hostPlayersProvider().size
+                                val joined = PlayerState(
                                     id = playerId,
                                     name = msg.playerName,
                                     chips = msg.buyIn,
                                     seatOrder = seatOrder,
                                     deviceId = msg.deviceId
                                 )
-                            }
-                            
-                            assignedId = playerId
-                            onPlayerJoined(joined)
+                                onPlayerJoined(joined)
 
-                            val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = playerId)
-                            writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
-                            writer.newLine()
-                            writer.flush()
+                                val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = playerId)
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
+                                writer.newLine()
+                                writer.flush()
 
-                            val sync = NetworkMessage.StateSync(
-                                players = hostPlayersProvider(),
-                                handCounter = handCounterProvider(),
-                                transactions = txProvider().takeLast(50),
-                                contributions = contributionsProvider(),
-                                blindsState = blindsStateProvider(),
-                                blindsEnabled = blindsEnabledProvider(),
-                                sidePotEnabled = sidePotEnabledProvider(),
-                                selectedWinnerIds = selectedWinnerIdsProvider(),
-                                foldedPlayerIds = foldedPlayerIdsProvider(),
-                                gameStarted = gameStartedProvider(),
-                                currentRound = currentRoundProvider(),
-                                currentTurnPlayerId = currentTurnPlayerIdProvider(),
-                                roundContributions = roundContributionsProvider(),
-                                actedPlayerIds = actedPlayerIdsProvider()
-                            )
-                            writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
-                            writer.newLine()
-                            writer.flush()
-
-                            synchronized(clientsLock) {
-                                clients[playerId] = ClientConnection(
-                                    playerId = playerId,
-                                    socket = socket,
-                                    writer = writer,
-                                    readerJob = this.coroutineContext[Job]
-                                        ?: error("missing coroutine job")
+                                val sync = NetworkMessage.StateSync(
+                                    players = hostPlayersProvider(),
+                                    handCounter = handCounterProvider(),
+                                    transactions = txProvider().takeLast(50),
+                                    contributions = contributionsProvider(),
+                                    blindsState = blindsStateProvider(),
+                                    blindsEnabled = blindsEnabledProvider(),
+                                    sidePotEnabled = sidePotEnabledProvider(),
+                                    selectedWinnerIds = selectedWinnerIdsProvider(),
+                                    foldedPlayerIds = foldedPlayerIdsProvider(),
+                                    gameStarted = gameStartedProvider(),
+                                    currentRound = currentRoundProvider(),
+                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                    roundContributions = roundContributionsProvider(),
+                                    actedPlayerIds = actedPlayerIdsProvider()
                                 )
-                            }
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                writer.newLine()
+                                writer.flush()
 
-                            onEvent(Event.PlayerJoined(joined))
+                                synchronized(clientsLock) {
+                                    clients[playerId] = ClientConnection(
+                                        playerId = playerId,
+                                        socket = socket,
+                                        writer = writer,
+                                        readerJob = this.coroutineContext[Job]
+                                            ?: error("missing coroutine job")
+                                    )
+                                }
+
+                                onEvent(Event.PlayerJoined(joined))
+                            }
                         }
 
                         else -> Unit
@@ -482,7 +520,7 @@ class LanTableClient(
     private var lastHostIp: String? = null
     private var lastPlayerName: String? = null
     private var lastBuyIn: Int = 0
-    private var lastDeviceId: String? = null
+    private var lastDeviceId: String = ""
     private var assignedPlayerId: String? = null
     private var reconnecting = false
     private var shouldReconnect = true
@@ -516,7 +554,7 @@ class LanTableClient(
     @Volatile
     private var writer: BufferedWriter? = null
 
-    fun connect(hostIp: String, playerName: String, buyIn: Int, deviceId: String, onEvent: (Event) -> Unit) {
+    fun connect(hostIp: String, playerName: String, buyIn: Int, deviceId: String = "", onEvent: (Event) -> Unit) {
         disconnect()
         lastHostIp = hostIp
         lastPlayerName = playerName
@@ -533,7 +571,7 @@ class LanTableClient(
         hostIp: String,
         playerName: String,
         buyIn: Int,
-        deviceId: String,
+        deviceId: String = "",
         isReconnect: Boolean,
         onEvent: (Event) -> Unit
     ) {
@@ -654,14 +692,14 @@ class LanTableClient(
             if (shouldReconnect && assignedPlayerId != null && !reconnecting) {
                 reconnecting = true
                 onEvent(Event.Disconnected(willReconnect = true))
-                attemptReconnect(onEvent)
+                attemptReconnect(deviceId, onEvent)
             } else if (shouldReconnect && assignedPlayerId == null) {
                 onEvent(Event.Disconnected(willReconnect = false))
             }
         }
     }
 
-    private fun attemptReconnect(onEvent: (Event) -> Unit) {
+    private fun attemptReconnect(deviceId: String = lastDeviceId, onEvent: (Event) -> Unit) {
         val ip = lastHostIp ?: return
         val name = lastPlayerName ?: return
 
@@ -686,7 +724,7 @@ class LanTableClient(
                 if (reachable) {
                     // 房主已上线，执行完整重连
                     reconnecting = false
-                    doConnect(ip, name, lastBuyIn, lastDeviceId ?: "", isReconnect = true, onEvent = onEvent)
+                    doConnect(ip, name, lastBuyIn, deviceId, isReconnect = true, onEvent = onEvent)
                     return@launch
                 }
             }
@@ -700,7 +738,7 @@ class LanTableClient(
     /**
      * 从首页手动重连（已有 playerId，发送 Reconnect 消息）
      */
-    fun reconnect(hostIp: String, playerId: String, playerName: String, buyIn: Int, deviceId: String, onEvent: (Event) -> Unit) {
+    fun reconnect(hostIp: String, playerId: String, playerName: String, buyIn: Int, deviceId: String = "", onEvent: (Event) -> Unit) {
         disconnect()
         lastHostIp = hostIp
         lastPlayerName = playerName

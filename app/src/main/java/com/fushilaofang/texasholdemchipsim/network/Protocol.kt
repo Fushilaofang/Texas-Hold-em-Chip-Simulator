@@ -13,7 +13,7 @@ sealed class NetworkMessage {
     data class JoinRequest(
         val playerName: String,
         val buyIn: Int,
-        /** 设备唯一标识符，用于服务端识别设备 */
+        /** 设备唯一编码，用于识别同一台设备的玩家并防止重复账号 */
         val deviceId: String = ""
     ) : NetworkMessage()
 
@@ -98,13 +98,13 @@ sealed class NetworkMessage {
     @SerialName("pong")
     data object Pong : NetworkMessage()
 
-    /** 掉线重连请求（客户端 → 服务端，携带旧playerId和deviceId） */
+    /** 掉线重连请求（客户端 → 服务端，携带旧playerId） */
     @Serializable
     @SerialName("reconnect")
     data class Reconnect(
         val playerId: String,
         val playerName: String,
-        /** 设备唯一标识符，用于验证设备身份 */
+        /** 设备唯一编码，辅助服务端识别重连来源 */
         val deviceId: String = ""
     ) : NetworkMessage()
 

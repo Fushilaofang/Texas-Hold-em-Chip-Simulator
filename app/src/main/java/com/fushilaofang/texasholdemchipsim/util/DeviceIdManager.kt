@@ -1,46 +1,31 @@
 package com.fushilaofang.texasholdemchipsim.util
 
 import android.content.Context
-import android.content.SharedPreferences
 import java.util.UUID
 
 /**
- * 设备唯一标识管理器
+ * 设备唯一编码管理器
  *
- * 为每个设备生成一个唯一且持久的标识符，用于绑定玩家账号。
- * 即使玩家修改昵称或重新安装应用，只要保留了SharedPreferences数据，
- * 设备ID保持不变，从而避免账号重复的问题。
+ * 每台设备在首次运行时生成一个随机 UUID 并持久化到 SharedPreferences。
+ * 该 ID 作为玩家账号的稳定标识符，确保即使昵称更改或应用重启，依然能
+ * 识别为同一玩家，避免大厅中出现重复账号问题。
  */
 object DeviceIdManager {
-    private const val PREFS_NAME = "device_id_prefs"
-    private const val KEY_DEVICE_ID = "unique_device_id"
+
+    private const val PREFS_NAME = "device_identity"
+    private const val KEY_DEVICE_ID = "device_id"
 
     /**
-     * 获取或生成设备唯一ID
-     *
-     * 首次调用时会生成一个全局唯一的UUID并持久化。
-     * 后续调用始终返回同一个ID。
-     *
-     * @param context Android应用上下文
-     * @return 设备唯一标识符（UUID格式）
+     * 获取本设备的唯一 ID。
+     * - 若已存在则直接返回；
+     * - 否则生成新 UUID 并持久化后返回。
      */
     fun getDeviceId(context: Context): String {
-        val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        
-        var deviceId = prefs.getString(KEY_DEVICE_ID, null)
-        if (deviceId == null) {
-            deviceId = UUID.randomUUID().toString()
-            prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply()
-        }
-        return deviceId
-    }
-
-    /**
-     * 重置设备ID（仅用于测试或特殊场景）
-     * @param context Android应用上下文
-     */
-    fun resetDeviceId(context: Context) {
-        val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().remove(KEY_DEVICE_ID).apply()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val existing = prefs.getString(KEY_DEVICE_ID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val newId = UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_DEVICE_ID, newId).apply()
+        return newId
     }
 }

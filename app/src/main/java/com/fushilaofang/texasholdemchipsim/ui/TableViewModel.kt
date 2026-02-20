@@ -1384,6 +1384,25 @@ class TableViewModel(
                 }
                 syncToClients()
             }
+            is LanTableServer.Event.PlayerRejoinedByDevice -> {
+                // 同一台设备换了昵称/头像后重新进入：复用原有槽位，更新资料
+                _uiState.update { state ->
+                    state.copy(
+                        players = state.players.map {
+                            if (it.id == event.playerId)
+                                it.copy(
+                                    name = event.newName.ifBlank { it.name },
+                                    avatarBase64 = event.avatarBase64.ifBlank { it.avatarBase64 }
+                                )
+                            else it
+                        },
+                        disconnectedPlayerIds = state.disconnectedPlayerIds - event.playerId,
+                        info = "${event.newName.ifBlank { "玩家" }} 重新加入房间"
+                    )
+                }
+                syncToClients()
+                saveSession()
+            }
             else -> Unit
         }
     }
