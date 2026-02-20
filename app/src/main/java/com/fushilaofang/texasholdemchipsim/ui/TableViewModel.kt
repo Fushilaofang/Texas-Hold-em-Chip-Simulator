@@ -1332,11 +1332,20 @@ class TableViewModel(
                 }
             }
             is LanTableServer.Event.PlayerReconnected -> {
-                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
                 _uiState.update { state ->
+                    val newName = event.updatedName.ifBlank {
+                        state.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                    }
                     state.copy(
+                        players = state.players.map {
+                            if (it.id == event.playerId) {
+                                var p = it.copy(name = newName)
+                                if (event.updatedChips > 0) p = p.copy(chips = event.updatedChips)
+                                p
+                            } else it
+                        },
                         disconnectedPlayerIds = state.disconnectedPlayerIds - event.playerId,
-                        info = "$pName 已重连"
+                        info = "$newName 已重连"
                     )
                 }
                 syncToClients()
@@ -1574,6 +1583,16 @@ class TableViewModel(
         } catch (_: Exception) { emptySet() }
 
         if (mode == TableMode.HOST) {
+            // 使用当前已保存的昵称（玩家可能在退出后修改过昵称）
+            val currentName = _uiState.value.savedPlayerName.ifBlank { selfName }
+            val currentBuyIn = _uiState.value.savedBuyIn
+            // 在大厅阶段允许更新自身昵称和筹码
+            val restoredPlayers = players.map { p ->
+                if (p.id == selfId) {
+                    val nameUpdated = p.copy(name = currentName)
+                    if (!gameStarted) nameUpdated.copy(chips = currentBuyIn) else nameUpdated
+                } else p
+            }
             // 房主重新加入：恢复状态 + 重启服务端 + 重启广播
             _uiState.update {
                 it.copy(
@@ -1581,8 +1600,8 @@ class TableViewModel(
                     screen = if (gameStarted) ScreenState.GAME else ScreenState.LOBBY,
                     tableName = tableName,
                     selfId = selfId,
-                    selfName = selfName,
-                    players = players,
+                    selfName = currentName,
+                    players = restoredPlayers,
                     handCounter = handCounter,
                     gameStarted = gameStarted,
                     blindsState = blindsState,
@@ -1620,15 +1639,21 @@ class TableViewModel(
                 return
             }
 
+            // 使用当前已保存的昵称，并更新本地玩家列表中的自身昵称展示
+            val currentName = _uiState.value.savedPlayerName.ifBlank { selfName }
+            val currentBuyIn = _uiState.value.savedBuyIn
+
             _uiState.update {
                 it.copy(
                     mode = TableMode.CLIENT,
                     screen = if (gameStarted) ScreenState.GAME else ScreenState.LOBBY,
                     tableName = tableName,
                     selfId = selfId,
-                    selfName = selfName,
+                    selfName = currentName,
                     hostIp = hostIp,
-                    players = players,
+                    players = players.map { p ->
+                        if (p.id == selfId) p.copy(name = currentName) else p
+                    },
                     handCounter = handCounter,
                     gameStarted = gameStarted,
                     blindsState = blindsState,
@@ -1640,7 +1665,7 @@ class TableViewModel(
                 )
             }
 
-            client.reconnect(hostIp, selfId, selfName, _uiState.value.savedBuyIn, deviceId, ::handleClientEvent)
+            client.reconnect(hostIp, selfId, currentName, currentBuyIn, deviceId, ::handleClientEvent)
             acquireWakeLock()
         }
     }

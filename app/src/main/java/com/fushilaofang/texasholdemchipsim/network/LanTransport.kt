@@ -42,7 +42,16 @@ class LanTableServer(
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
-        data class PlayerReconnected(val playerId: String) : Event()
+        /**
+         * 玩家重连成功。
+         * @param updatedName  鞞空则更新是后服务端玩家是同中昵称
+         * @param updatedChips 大于 0 则更新筹码（仅大厅阶段），‑₼e表示不更改
+         */
+        data class PlayerReconnected(
+            val playerId: String,
+            val updatedName: String = "",
+            val updatedChips: Int = -1
+        ) : Event()
         data class ContributionReceived(val playerId: String, val amount: Int) : Event()
         data class ReadyToggleReceived(val playerId: String, val isReady: Boolean) : Event()
         data class WinToggleReceived(val playerId: String, val isWinner: Boolean) : Event()
@@ -355,7 +364,13 @@ class LanTableServer(
                                     )
                                 }
 
-                                onEvent(Event.PlayerReconnected(oldId))
+                                // 大厅阶段（游戏未开始）重连时，允许更新是同名和初始筹码
+                                val updatedChips = if (!gameStartedProvider() && msg.newBuyIn > 0) msg.newBuyIn else -1
+                                onEvent(Event.PlayerReconnected(
+                                    playerId = oldId,
+                                    updatedName = msg.playerName,
+                                    updatedChips = updatedChips
+                                ))
                             } else {
                                 // 找不到该玩家，拒绝重连
                                 val err = NetworkMessage.Error(reason = "重连失败: 找不到玩家记录")
@@ -589,11 +604,12 @@ class LanTableClient(
                 writer = w
 
                 if (isReconnect && assignedPlayerId != null) {
-                    // 发送重连请求
+                    // 发送重连请求，携带新昵称及希望更新的初始筹码
                     val reconMsg = NetworkMessage.Reconnect(
                         playerId = assignedPlayerId!!,
                         playerName = playerName,
-                        deviceId = deviceId
+                        deviceId = deviceId,
+                        newBuyIn = buyIn
                     )
                     w.write(json.encodeToString(NetworkMessage.serializer(), reconMsg))
                     w.newLine()

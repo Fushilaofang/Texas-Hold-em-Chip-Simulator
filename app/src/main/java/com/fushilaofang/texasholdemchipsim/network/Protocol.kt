@@ -105,7 +105,9 @@ sealed class NetworkMessage {
         val playerId: String,
         val playerName: String,
         /** 设备唯一编码，辅助服务端识别重连来源 */
-        val deviceId: String = ""
+        val deviceId: String = "",
+        /** 玩家希望更新的初始筹码（仅在大厅阶段重连时生效，‒0 表示不更改） */
+        val newBuyIn: Int = 0
     ) : NetworkMessage()
 
     /** 重连成功响应 */
