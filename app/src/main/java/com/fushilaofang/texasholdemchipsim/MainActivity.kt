@@ -2532,13 +2532,31 @@ private fun ChipInputDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                val currentAmount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
+                val isValid = currentAmount > callAmount && currentAmount <= maxChips
+                val validationMsg = when {
+                    currentAmount <= 0           -> "请选择或输入投入金额"
+                    currentAmount <= callAmount  -> "加注需超过跟注额 $callAmount"
+                    currentAmount > maxChips     -> "超出可用筹码 $maxChips"
+                    else                         -> ""
+                }
+                if (validationMsg.isNotEmpty()) {
+                    Text(
+                        validationMsg,
+                        fontSize = 11.sp,
+                        color = Color(0xFFE53935),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Button(
-                    onClick = {
-                        val amount = if (customMode) (customText.toIntOrNull() ?: 0) else selectedAmount
-                        if (amount > 0) onConfirm(amount) else onDismiss()
-                    },
+                    onClick = { onConfirm(currentAmount) },
+                    enabled = isValid,
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2))
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF1976D2),
+                        disabledContainerColor = Color(0xFFBDBDBD)
+                    )
                 ) { Text("确认加注", fontWeight = FontWeight.Bold) }
                 OutlinedButton(
                     onClick = onDismiss,
