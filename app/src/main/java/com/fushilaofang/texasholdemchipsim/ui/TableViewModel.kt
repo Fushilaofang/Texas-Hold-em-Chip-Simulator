@@ -154,7 +154,15 @@ class TableViewModel(
             override fun onAvailable(network: Network) {
                 activeNetworkCount++
                 if (_uiState.value.lanDisconnected) {
-                    _uiState.update { it.copy(lanDisconnected = false, info = "局域网已恢复") }
+                    val selfId = _uiState.value.selfId
+                    _uiState.update { state ->
+                        state.copy(
+                            lanDisconnected = false,
+                            info = "局域网已恢复",
+                            // 移除自己的掉线标记；远端玩家通过各自重连流程恢复
+                            disconnectedPlayerIds = state.disconnectedPlayerIds - selfId
+                        )
+                    }
                     val mode = _uiState.value.mode
                     if (mode == TableMode.HOST) {
                         // 局域网恢复同时重启 UDP 广播
@@ -168,11 +176,25 @@ class TableViewModel(
             override fun onLost(network: Network) {
                 activeNetworkCount = (activeNetworkCount - 1).coerceAtLeast(0)
                 if (activeNetworkCount == 0 && !_uiState.value.lanDisconnected) {
-                    _uiState.update { it.copy(lanDisconnected = true, info = "局域网已断开") }
-                    val mode = _uiState.value.mode
-                    if (mode == TableMode.HOST) {
+                    val cur = _uiState.value
+                    val selfId = cur.selfId
+                    // HOST：立即将所有远端玩家标记为掉线，无需等 60 秒心跳超时
+                    // CLIENT：将自己标记为掉线（对本地 UI 可见）
+                    val newDisconnected = when (cur.mode) {
+                        TableMode.HOST -> cur.disconnectedPlayerIds +
+                            cur.players.filter { it.id != selfId }.map { it.id }.toSet()
+                        TableMode.CLIENT -> cur.disconnectedPlayerIds + selfId
+                        TableMode.IDLE -> cur.disconnectedPlayerIds
+                    }
+                    _uiState.update { it.copy(
+                        lanDisconnected = true,
+                        info = "局域网已断开",
+                        disconnectedPlayerIds = newDisconnected
+                    ) }
+                    if (cur.mode == TableMode.HOST) {
                         // LAN 断开后停止 UDP 广播，避免无效包
                         roomAdvertiser.stopBroadcast()
+                        syncToClients()
                     }
                 }
             }
