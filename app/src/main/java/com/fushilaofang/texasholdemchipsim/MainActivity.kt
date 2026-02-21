@@ -309,7 +309,7 @@ private fun HomeScreen(
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = buyIn.toString(),
-            onValueChange = { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) },
+            onValueChange = { if (it.length <= 8) { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) } },
             label = { Text("初始筹码") },
             modifier = Modifier.fillMaxWidth()
         )
@@ -1808,6 +1808,8 @@ private fun GameScreen(
         var showCallConfirm by remember { mutableStateOf(false) }
         var pendingCallAmount by remember { mutableIntStateOf(0) }
         var showCheckConfirm by remember { mutableStateOf(false) }
+        var showAllInConfirm by remember { mutableStateOf(false) }
+        var pendingAllInAmount by remember { mutableIntStateOf(0) }
 
         // 过牌确认弹窗
         if (showCheckConfirm) {
@@ -1840,6 +1842,23 @@ private fun GameScreen(
                 },
                 dismissButton = {
                     OutlinedButton(onClick = { showCallConfirm = false }) { Text("取消") }
+                }
+            )
+        }
+        // All-In 确认弹窗
+        if (showAllInConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showAllInConfirm = false },
+                title = { Text("确认 All-In!", fontWeight = FontWeight.Bold) },
+                text = { Text("将全押所有剩余筹码 $pendingAllInAmount，此操作不可撤销！") },
+                confirmButton = {
+                    Button(
+                        onClick = { showAllInConfirm = false; onSubmitContribution(pendingAllInAmount) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                    ) { Text("确认 All-In!", fontWeight = FontWeight.Bold) }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showAllInConfirm = false }) { Text("取消") }
                 }
             )
         }
@@ -1952,7 +1971,7 @@ private fun GameScreen(
                             } else if (mustAllIn) {
                                 // 筹码不足以完整跟注，只能 All-In
                                 Button(
-                                    onClick = { if (canAct) onSubmitContribution(myChips) },
+                                    onClick = { if (canAct) { pendingAllInAmount = myChips; showAllInConfirm = true } },
                                     enabled = canAct,
                                     modifier = Modifier.weight(1f).height(48.dp),
                                     colors = ButtonDefaults.buttonColors(
@@ -2500,7 +2519,7 @@ private fun ChipInputDialog(
                                                 }
                                             }
                                             else -> {
-                                                if (customText.length < 8) {
+                                                if (customText.length < 9) {
                                                     customText += key
                                                 }
                                             }
