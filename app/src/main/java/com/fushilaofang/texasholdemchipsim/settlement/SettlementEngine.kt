@@ -42,8 +42,11 @@ class SettlementEngine {
         val sidePots = SidePotCalculator.buildPots(normalizedContrib)
 
         // 为每个边池分配给优先级最高的有资格赢家组
+        // potPayouts[i] = Map<playerId, amount> 表示第 i 个池子各赢家实际获得金额
+        val potPayouts = mutableListOf<Pair<SidePot, Map<String, Int>>>()
         val payouts = mutableMapOf<String, Int>()
         for (pot in sidePots) {
+            val potWinMap = mutableMapOf<String, Int>()
             var distributed = false
             for (winnerGroup in winnerRanking) {
                 val eligible = winnerGroup.filter { pot.eligiblePlayerIds.contains(it) }
@@ -53,7 +56,9 @@ class SettlementEngine {
                     val sortedEligible = eligible.sortedBy { playerMap[it]?.seatOrder ?: 0 }
                     sortedEligible.forEachIndexed { idx, pid ->
                         val extra = if (idx < remainder) 1 else 0
-                        payouts[pid] = (payouts[pid] ?: 0) + base + extra
+                        val amount = base + extra
+                        potWinMap[pid] = (potWinMap[pid] ?: 0) + amount
+                        payouts[pid] = (payouts[pid] ?: 0) + amount
                     }
                     distributed = true
                     break
@@ -63,9 +68,11 @@ class SettlementEngine {
             if (!distributed) {
                 for (pid in pot.eligiblePlayerIds) {
                     val share = pot.amount / pot.eligiblePlayerIds.size
+                    potWinMap[pid] = (potWinMap[pid] ?: 0) + share
                     payouts[pid] = (payouts[pid] ?: 0) + share
                 }
             }
+            if (potWinMap.isNotEmpty()) potPayouts.add(pot to potWinMap)
         }
 
         // 更新玩家筹码（coerceAtLeast 防止极端情况出现负值）
@@ -96,21 +103,24 @@ class SettlementEngine {
                     )
                 }
             }
-            payouts.forEach { (playerId, payout) ->
-                if (payout > 0) {
-                    add(
-                        ChipTransaction(
-                            id = UUID.randomUUID().toString(),
-                            timestamp = timestamp,
-                            handId = handId,
-                            playerId = playerId,
-                            playerName = nameMap[playerId] ?: playerId.take(6),
-                            amount = payout,
-                            type = TransactionType.WIN_PAYOUT,
-                            note = if (sidePots.size > 1) "赢得底池(含边池)" else "赢得底池",
-                            balanceAfter = updatedMap[playerId]?.chips ?: 0
+            // 按池逐个生成赢彩记录，label 区分主池/边池
+            potPayouts.forEach { (pot, winMap) ->
+                winMap.forEach { (playerId, payout) ->
+                    if (payout > 0) {
+                        add(
+                            ChipTransaction(
+                                id = UUID.randomUUID().toString(),
+                                timestamp = timestamp,
+                                handId = handId,
+                                playerId = playerId,
+                                playerName = nameMap[playerId] ?: playerId.take(6),
+                                amount = payout,
+                                type = TransactionType.WIN_PAYOUT,
+                                note = "赢得${pot.label}",
+                                balanceAfter = updatedMap[playerId]?.chips ?: 0
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

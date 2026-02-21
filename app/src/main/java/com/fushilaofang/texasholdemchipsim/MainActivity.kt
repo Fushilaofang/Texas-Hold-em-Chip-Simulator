@@ -2611,8 +2611,161 @@ private fun ChipInputDialog(
 // ==================== 最近记录界面 ====================
 
 @Composable
+private fun TransactionDetailDialog(
+    tx: com.fushilaofang.texasholdemchipsim.model.ChipTransaction,
+    playerName: String,
+    onDismiss: () -> Unit
+) {
+    val typeLabel = when (tx.type) {
+        TransactionType.BLIND_DEDUCTION -> "盲注"
+        TransactionType.BET             -> "下注"
+        TransactionType.CALL            -> "跟注"
+        TransactionType.RAISE           -> "加注"
+        TransactionType.ALL_IN          -> "全压"
+        TransactionType.CHECK           -> "过牌"
+        TransactionType.FOLD            -> "弃牌"
+        TransactionType.WIN_PAYOUT      -> "赢彩池"
+        TransactionType.CONTRIBUTION    -> "投入"
+    }
+    val typeColor = when (tx.type) {
+        TransactionType.BLIND_DEDUCTION -> Color(0xFFF57F17)
+        TransactionType.BET             -> Color(0xFFE65100)
+        TransactionType.CALL            -> Color(0xFF1565C0)
+        TransactionType.RAISE           -> Color(0xFF6A1B9A)
+        TransactionType.ALL_IN          -> Color(0xFFB71C1C)
+        TransactionType.CHECK           -> Color(0xFF9E9E9E)
+        TransactionType.FOLD            -> Color(0xFF757575)
+        TransactionType.WIN_PAYOUT      -> Color(0xFF2E7D32)
+        TransactionType.CONTRIBUTION    -> Color(0xFF78909C)
+    }
+    val absAmount = kotlin.math.abs(tx.amount)
+    val balanceBefore = tx.balanceAfter - tx.amount
+    val narrative = when (tx.type) {
+        TransactionType.BLIND_DEDUCTION ->
+            "$playerName 作为盲注支付了 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码"
+        TransactionType.BET ->
+            "$playerName 主动下注 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码"
+        TransactionType.CALL ->
+            "$playerName 选择跟注，跟入 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码"
+        TransactionType.RAISE ->
+            "$playerName 选择加注，本次共投入 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码"
+        TransactionType.ALL_IN ->
+            "$playerName 全押上阵，押上全部 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码（已全押）"
+        TransactionType.CHECK ->
+            "$playerName 选择过牌，本次未投入任何筹码\n当前持有 ${tx.balanceAfter} 筹码"
+        TransactionType.FOLD ->
+            "$playerName 选择弃牌，退出本轮角逐\n当前持有 ${tx.balanceAfter} 筹码"
+        TransactionType.WIN_PAYOUT ->
+            "$playerName ${tx.note}，共获得 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，赢彩后持有 ${tx.balanceAfter} 筹码"
+        TransactionType.CONTRIBUTION ->
+            "$playerName 本轮共投入 $absAmount 筹码\n操作前持有 $balanceBefore 筹码，操作后剩余 ${tx.balanceAfter} 筹码"
+    }
+    val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(tx.timestamp))
+    val showAmount = tx.type != TransactionType.CHECK && tx.type != TransactionType.FOLD
+    val amountText = when {
+        !showAmount    -> "—"
+        tx.amount >= 0 -> "+${tx.amount}"
+        else           -> "${tx.amount}"
+    }
+    val amountColor = when {
+        !showAmount    -> Color(0xFF9E9E9E)
+        tx.amount >= 0 -> Color(0xFF2E7D32)
+        else           -> Color(0xFFC62828)
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            elevation = CardDefaults.cardElevation(8.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                // 标题行
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .background(typeColor.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
+                            .border(1.dp, typeColor.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(typeLabel, fontSize = 13.sp, color = typeColor, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        playerName,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(amountText, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = amountColor)
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFE0E0E0))
+
+                // 基础信息表格
+                @Composable
+                fun InfoRow(label: String, value: String, valueColor: Color = Color(0xFF212121)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 3.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(label, fontSize = 12.sp, color = Color(0xFF757575))
+                        Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = valueColor)
+                    }
+                }
+
+                InfoRow("手号", tx.handId, Color(0xFF5C6BC0))
+                InfoRow("时间", timeStr)
+                if (showAmount) {
+                    InfoRow("操作前筹码", "$balanceBefore")
+                    InfoRow("变化", amountText, amountColor)
+                    InfoRow("操作后筹码", "${tx.balanceAfter}", Color(0xFF1565C0))
+                } else {
+                    InfoRow("当前筹码", "${tx.balanceAfter}", Color(0xFF1565C0))
+                }
+                if (tx.note.isNotBlank()) {
+                    InfoRow("操作备注", tx.note)
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color(0xFFE0E0E0))
+
+                // 语言描述
+                Text("筹码变化过程", fontSize = 11.sp, color = Color(0xFF9E9E9E), fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    narrative,
+                    fontSize = 13.sp,
+                    color = Color(0xFF424242),
+                    lineHeight = 20.sp
+                )
+
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                ) { Text("关闭") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
+    var selectedTx by remember { mutableStateOf<com.fushilaofang.texasholdemchipsim.model.ChipTransaction?>(null) }
+
+    // 详情弹窗
+    selectedTx?.let { tx ->
+        val pName = sortedPlayers.firstOrNull { it.id == tx.playerId }?.name
+            ?: tx.playerName.ifBlank { tx.playerId.take(6) }
+        TransactionDetailDialog(tx = tx, playerName = pName, onDismiss = { selectedTx = null })
+    }
 
     Column(
         modifier = Modifier
@@ -2703,6 +2856,7 @@ private fun LogsScreen(state: TableUiState, onBack: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable { selectedTx = tx }
                             .background(bgColor, shape = RoundedCornerShape(6.dp))
                             .padding(horizontal = 8.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically
