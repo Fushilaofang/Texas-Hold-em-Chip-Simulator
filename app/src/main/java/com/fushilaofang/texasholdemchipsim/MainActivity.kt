@@ -1807,7 +1807,25 @@ private fun GameScreen(
         var showChipDialog by remember { mutableStateOf(false) }
         var showCallConfirm by remember { mutableStateOf(false) }
         var pendingCallAmount by remember { mutableIntStateOf(0) }
+        var showCheckConfirm by remember { mutableStateOf(false) }
 
+        // 过牌确认弹窗
+        if (showCheckConfirm) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showCheckConfirm = false },
+                title = { Text("确认过牌", fontWeight = FontWeight.Bold) },
+                text = { Text("确认过牌吗？") },
+                confirmButton = {
+                    Button(
+                        onClick = { showCheckConfirm = false; onSubmitContribution(0) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
+                    ) { Text("确认过牌") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { showCheckConfirm = false }) { Text("取消") }
+                }
+            )
+        }
         // 跟注确认弹窗
         if (showCallConfirm) {
             androidx.compose.material3.AlertDialog(
@@ -1923,7 +1941,7 @@ private fun GameScreen(
                             if (callNeeded <= 0) {
                                 // 可以过牌
                                 Button(
-                                    onClick = { if (canAct) onSubmitContribution(0) },
+                                    onClick = { if (canAct) showCheckConfirm = true },
                                     enabled = canAct,
                                     modifier = Modifier.weight(1f).height(48.dp),
                                     colors = ButtonDefaults.buttonColors(
