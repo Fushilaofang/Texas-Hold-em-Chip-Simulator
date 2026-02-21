@@ -91,6 +91,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
 import androidx.core.content.ContextCompat
@@ -275,6 +276,7 @@ private fun HomeScreen(
 ) {
     var playerName by remember(state.savedPlayerName) { mutableStateOf(state.savedPlayerName) }
     var buyIn by remember(state.savedBuyIn) { mutableIntStateOf(state.savedBuyIn) }
+    var buyInText by remember(state.savedBuyIn) { mutableStateOf(state.savedBuyIn.toString()) }
 
     Column(
         modifier = Modifier
@@ -308,10 +310,29 @@ private fun HomeScreen(
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = buyIn.toString(),
-            onValueChange = { if (it.length <= 8) { val v = it.toIntOrNull() ?: buyIn; buyIn = v; onBuyInChange(v) } },
+            value = buyInText,
+            onValueChange = {
+                if (it.length <= 8) {
+                    buyInText = it
+                    val v = it.toIntOrNull()
+                    if (v != null && v > 0) { buyIn = v; onBuyInChange(v) }
+                }
+            },
             label = { Text("初始筹码") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focusState ->
+                    if (!focusState.isFocused) {
+                        val v = buyInText.toIntOrNull()
+                        if (v == null || v <= 0) {
+                            buyInText = "1"
+                            buyIn = 1
+                            onBuyInChange(1)
+                        } else {
+                            buyInText = v.toString()
+                        }
+                    }
+                }
         )
 
         Spacer(Modifier.height(32.dp))
