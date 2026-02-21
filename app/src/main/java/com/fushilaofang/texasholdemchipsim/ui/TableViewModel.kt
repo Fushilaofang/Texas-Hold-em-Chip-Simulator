@@ -56,7 +56,8 @@ data class PendingMidJoinInfo(
     val requestId: String,
     val playerName: String,
     val buyIn: Int,
-    val avatarBase64: String = ""
+    val avatarBase64: String = "",
+    val playerId: String = ""     // 玩家已在 players 列表中的 ID
 )
 
 /** 客户端中途加入的审批状态 */
@@ -112,7 +113,11 @@ data class TableUiState(
     val allowMidGameJoin: Boolean = false,
     val pendingMidJoins: List<PendingMidJoinInfo> = emptyList(),
     val midGameJoinStatus: MidGameJoinStatus = MidGameJoinStatus.NONE,
-    val midGameWaitingPlayerIds: Set<String> = emptySet()
+    val midGameWaitingPlayerIds: Set<String> = emptySet(),
+    /** 已连接但尚未申请/获批的观察者（游戏进行中加入大厅但还没点"申请加入"或已被拒绝之前） */
+    val midGameObserverIds: Set<String> = emptySet(),
+    /** 客户端是否已发送"申请加入"请求（等待房主审批中） */
+    val midGameJoinRequestSent: Boolean = false
 )
 
 class TableViewModel(
@@ -428,24 +433,16 @@ class TableViewModel(
         val state = _uiState.value
         if (state.mode != TableMode.HOST) return
         val pending = state.pendingMidJoins.firstOrNull { it.requestId == requestId } ?: return
-        val newPlayerId = UUID.randomUUID().toString()
-        val seatOrder = state.players.size
-        val player = PlayerState(
-            id = newPlayerId,
-            name = pending.playerName,
-            chips = pending.buyIn,
-            seatOrder = seatOrder,
-            avatarBase64 = pending.avatarBase64
-        )
+        // 玩家已在 players 列表（observer 阶段已加入），只需从 observer 移至 waiting
         _uiState.update { s ->
             s.copy(
-                players = s.players + player,
-                midGameWaitingPlayerIds = s.midGameWaitingPlayerIds + newPlayerId,
+                midGameObserverIds = s.midGameObserverIds - pending.playerId,
+                midGameWaitingPlayerIds = s.midGameWaitingPlayerIds + pending.playerId,
                 pendingMidJoins = s.pendingMidJoins.filter { it.requestId != requestId },
                 info = "${pending.playerName} 的加入请求已批准，等待下一手..."
             )
         }
-        server.approveMidGameJoin(requestId, newPlayerId)
+        server.approveMidGameJoin(requestId)
         syncToClients()
         saveSession()
     }
@@ -454,13 +451,31 @@ class TableViewModel(
         val state = _uiState.value
         if (state.mode != TableMode.HOST) return
         val pending = state.pendingMidJoins.firstOrNull { it.requestId == requestId } ?: return
+        // 拒绝：从 players 列表移除该 observer，并通知客户端
         _uiState.update { s ->
             s.copy(
+                players = s.players.filter { it.id != pending.playerId },
+                midGameObserverIds = s.midGameObserverIds - pending.playerId,
                 pendingMidJoins = s.pendingMidJoins.filter { it.requestId != requestId },
                 info = "${pending.playerName} 的加入请求已${if (block) "屏蔽" else "拒绝"}"
             )
         }
         server.rejectMidGameJoin(requestId, block)
+        syncToClients()
+    }
+
+    /** 观察者（游戏进行中连入大厅的玩家）申请正式加入下一手 */
+    fun requestMidGameJoin() {
+        if (_uiState.value.mode != TableMode.CLIENT) return
+        _uiState.update { it.copy(midGameJoinRequestSent = true, info = "正在提交加入申请...") }
+        client.requestMidGameJoin()
+    }
+
+    /** 观察者取消申请并离开大厅 */
+    fun cancelMidGameJoin() {
+        _uiState.update { it.copy(midGameJoinRequestSent = false, midGameJoinStatus = MidGameJoinStatus.NONE) }
+        client.cancelMidGameJoin()
+        goHome()
     }
 
     // ==================== 准备 / 开始游戏 ====================
@@ -497,7 +512,8 @@ class TableViewModel(
         return sorted.filter { p ->
             !state.foldedPlayerIds.contains(p.id) &&
             !state.disconnectedPlayerIds.contains(p.id) &&
-            !state.midGameWaitingPlayerIds.contains(p.id)
+            !state.midGameWaitingPlayerIds.contains(p.id) &&
+            !state.midGameObserverIds.contains(p.id)
         }
     }
 
@@ -1360,7 +1376,8 @@ class TableViewModel(
                     actedPlayerIds = state.actedPlayerIds,
                     initialDealerIndex = state.initialDealerIndex,
                     midGameWaitingPlayerIds = state.midGameWaitingPlayerIds,
-                    allowMidGameJoin = state.allowMidGameJoin
+                    allowMidGameJoin = state.allowMidGameJoin,
+                    midGameObserverIds = state.midGameObserverIds
                 )
             }
         }
@@ -1390,6 +1407,7 @@ class TableViewModel(
             actedPlayerIdsProvider = { _uiState.value.actedPlayerIds },
             allowMidGameJoinProvider = { _uiState.value.allowMidGameJoin },
             midGameWaitingPlayerIdsProvider = { _uiState.value.midGameWaitingPlayerIds },
+            midGameObserverIdsProvider = { _uiState.value.midGameObserverIds },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -1507,13 +1525,39 @@ class TableViewModel(
                 syncToClients()
                 saveSession()
             }
+            is LanTableServer.Event.MidGameObserverJoined -> {
+                // 观察者连入大厅（游戏进行中加入）
+                _uiState.update { state ->
+                    state.copy(
+                        players = if (state.players.none { it.id == event.player.id })
+                            state.players + event.player else state.players,
+                        midGameObserverIds = state.midGameObserverIds + event.player.id,
+                        info = "${event.player.name} 进入大厅观察"
+                    )
+                }
+                syncToClients()
+                saveSession()
+            }
+            is LanTableServer.Event.MidGameObserverLeft -> {
+                // 观察者取消/断线
+                _uiState.update { state ->
+                    state.copy(
+                        players = state.players.filter { it.id != event.playerId },
+                        midGameObserverIds = state.midGameObserverIds - event.playerId,
+                        pendingMidJoins = state.pendingMidJoins.filter { it.playerId != event.playerId }
+                    )
+                }
+                syncToClients()
+                saveSession()
+            }
             is LanTableServer.Event.MidGameJoinRequested -> {
-                // 有玩家申请中途加入，展示给房主审批
+                // 有玩家申请中途加入，展示给房主审批弹窗
                 val newPending = PendingMidJoinInfo(
                     requestId = event.requestId,
                     playerName = event.playerName,
                     buyIn = event.buyIn,
-                    avatarBase64 = event.avatarBase64
+                    avatarBase64 = event.avatarBase64,
+                    playerId = event.playerId
                 )
                 _uiState.update { state ->
                     state.copy(
@@ -1566,6 +1610,7 @@ class TableViewModel(
                         actedPlayerIds = event.actedPlayerIds,
                         initialDealerIndex = event.initialDealerIndex,
                         midGameWaitingPlayerIds = event.midGameWaitingPlayerIds,
+                        midGameObserverIds = event.midGameObserverIds,
                         allowMidGameJoin = event.allowMidGameJoin,
                         info = if (event.gameStarted && !isMidGameWaiting) "牌局状态已同步" else if (isMidGameWaiting) "已批准加入，等待下一手开始" else "等待房主开始游戏"
                     )
@@ -1591,6 +1636,7 @@ class TableViewModel(
                 _uiState.update { it.copy(
                     screen = ScreenState.LOBBY,
                     midGameJoinStatus = MidGameJoinStatus.PENDING,
+                    midGameJoinRequestSent = true,
                     info = "申请已提交，等待房主审批..."
                 ) }
             }

@@ -47,7 +47,9 @@ sealed class NetworkMessage {
         /** 已批准中途加入、等待下一手的玩家 ID 集合 */
         val midGameWaitingPlayerIds: Set<String> = emptySet(),
         /** 房主是否允许中途加入 */
-        val allowMidGameJoin: Boolean = false
+        val allowMidGameJoin: Boolean = false,
+        /** 已连接但尚未申请/获批的观察者玩家 ID 集合 */
+        val midGameObserverIds: Set<String> = emptySet()
     ) : NetworkMessage()
 
     /**
@@ -133,6 +135,16 @@ sealed class NetworkMessage {
         val newName: String,
         val avatarBase64: String = ""
     ) : NetworkMessage()
+
+    /** 客户端 → 服务端：玩家点击"申请加入"按钮 */
+    @Serializable
+    @SerialName("request_mid_game_join")
+    data object RequestMidGameJoin : NetworkMessage()
+
+    /** 客户端 → 服务端：玩家取消中途加入申请并离开 */
+    @Serializable
+    @SerialName("cancel_mid_game_join")
+    data object CancelMidGameJoin : NetworkMessage()
 
     /** 服务端 → 中途加入申请者：申请已收到，等待房主审批 */
     @Serializable

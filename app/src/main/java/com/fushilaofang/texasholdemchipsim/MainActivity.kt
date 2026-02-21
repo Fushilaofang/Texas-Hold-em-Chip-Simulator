@@ -219,7 +219,9 @@ class MainActivity : ComponentActivity() {
                         onSetInitialDealer = vm::setInitialDealer,
                         onToggleAllowMidGameJoin = vm::toggleAllowMidGameJoin,
                         onApproveMidGameJoin = vm::approveMidGameJoin,
-                        onRejectMidGameJoin = vm::rejectMidGameJoin
+                        onRejectMidGameJoin = vm::rejectMidGameJoin,
+                        onRequestMidGameJoin = vm::requestMidGameJoin,
+                        onCancelMidGameJoin = vm::cancelMidGameJoin
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -671,11 +673,55 @@ private fun LobbyScreen(
     onSetInitialDealer: (Int) -> Unit,
     onToggleAllowMidGameJoin: (Boolean) -> Unit = {},
     onApproveMidGameJoin: (String) -> Unit = {},
-    onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> }
+    onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> },
+    onRequestMidGameJoin: () -> Unit = {},
+    onCancelMidGameJoin: () -> Unit = {}
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
     val readyCount = sortedPlayers.count { it.isReady }
+    // 判断自己是否为 observer（游戏中连入但尚未申请/被批准的玩家）
+    val isSelfObserver = state.selfId.isNotBlank() && state.midGameObserverIds.contains(state.selfId)
+
+    // HOST 审批弹窗状态（AlertDialog）
+    val pendingRequest = state.pendingMidJoins.firstOrNull()
+
+    // 显示 HOST 中途加入审批 AlertDialog
+    if (state.mode == TableMode.HOST && pendingRequest != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {},
+            title = { Text("中途加入申请", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (pendingRequest.avatarBase64.isNotBlank()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AvatarPicker(avatarBase64 = pendingRequest.avatarBase64, size = 48, onClick = {})
+                            Column {
+                                Text(pendingRequest.playerName, fontWeight = FontWeight.SemiBold)
+                                Text("买入: ${pendingRequest.buyIn}", fontSize = 13.sp, color = Color.Gray)
+                            }
+                        }
+                    } else {
+                        Text("${pendingRequest.playerName} 申请加入")
+                        Text("买入: ${pendingRequest.buyIn}", fontSize = 13.sp, color = Color.Gray)
+                    }
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { onApproveMidGameJoin(pendingRequest.requestId) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
+                    ) { Text("同意") }
+                    OutlinedButton(onClick = { onRejectMidGameJoin(pendingRequest.requestId, false) }) { Text("拒绝") }
+                    Button(
+                        onClick = { onRejectMidGameJoin(pendingRequest.requestId, true) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                    ) { Text("屏蔽") }
+                }
+            }
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -760,49 +806,20 @@ private fun LobbyScreen(
             }
         }
 
-        // HOST 中途加入审批面板
+        // HOST 中途加入审批面板（已移至 AlertDialog，此处仅显示待审批数量提示）
         if (state.mode == TableMode.HOST && state.pendingMidJoins.isNotEmpty()) {
             HorizontalDivider()
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFFFF3E0), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0))
             ) {
-                Text("中途加入申请", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFFE65100))
-                state.pendingMidJoins.forEach { info ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        if (info.avatarBase64.isNotBlank()) {
-                            AvatarPicker(avatarBase64 = info.avatarBase64, size = 32, onClick = {})
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(info.playerName, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Text("买入: ${info.buyIn}", fontSize = 11.sp, color = Color.Gray)
-                        }
-                        Button(
-                            onClick = { onApproveMidGameJoin(info.requestId) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
-                        ) { Text("同意", fontSize = 12.sp) }
-                        OutlinedButton(
-                            onClick = { onRejectMidGameJoin(info.requestId, false) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                        ) { Text("拒绝", fontSize = 12.sp) }
-                        Button(
-                            onClick = { onRejectMidGameJoin(info.requestId, true) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
-                        ) { Text("屏蔽", fontSize = 12.sp) }
-                    }
-                }
+                Text(
+                    "⚠ 有 ${state.pendingMidJoins.size} 个中途加入申请等待审批",
+                    modifier = Modifier.padding(12.dp),
+                    color = Color(0xFFE65100),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
             }
         }
 
@@ -911,7 +928,7 @@ private fun LobbyScreen(
             val isSelfWaiting = state.selfId.isNotBlank() && state.midGameWaitingPlayerIds.contains(state.selfId)
             when {
                 isSelfWaiting -> {
-                    // 已获批，等待下一手弹窗
+                    // 已获批，等待下一手弹窗（AlertDialog）
                     androidx.compose.material3.AlertDialog(
                         onDismissRequest = {},
                         title = { Text("等待加入", fontWeight = FontWeight.Bold) },
@@ -925,12 +942,33 @@ private fun LobbyScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
                     ) { Text("等待下一手开始", fontSize = 18.sp) }
                 }
-                state.midGameJoinStatus == MidGameJoinStatus.PENDING -> {
-                    Button(
-                        onClick = {},
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        enabled = false
-                    ) { Text("等待房主审批...", fontSize = 18.sp) }
+                // observer：游戏中连入大厅，尚未发出申请
+                isSelfObserver && !state.midGameJoinRequestSent && state.midGameJoinStatus == MidGameJoinStatus.NONE -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = onRequestMidGameJoin,
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
+                        ) { Text("申请加入", fontSize = 18.sp) }
+                        OutlinedButton(
+                            onClick = onCancelMidGameJoin,
+                            modifier = Modifier.height(56.dp)
+                        ) { Text("离开") }
+                    }
+                }
+                // observer：申请已提交，等待审批
+                isSelfObserver && state.midGameJoinStatus == MidGameJoinStatus.PENDING -> {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        Button(
+                            onClick = {},
+                            modifier = Modifier.weight(1f).height(56.dp),
+                            enabled = false
+                        ) { Text("等待房主审批...", fontSize = 18.sp) }
+                        OutlinedButton(
+                            onClick = onCancelMidGameJoin,
+                            modifier = Modifier.height(56.dp)
+                        ) { Text("取消申请") }
+                    }
                 }
                 state.midGameJoinStatus == MidGameJoinStatus.REJECTED -> {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -1427,50 +1465,42 @@ private fun GameScreen(
 
         Spacer(Modifier.height(4.dp))
 
-        // ========== 游戏中中途加入审批面板 (HOST only) ==========
-        if (state.mode == TableMode.HOST && state.pendingMidJoins.isNotEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFFFF3E0), shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text("中途加入申请", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color(0xFFE65100))
-                state.pendingMidJoins.forEach { info ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        if (info.avatarBase64.isNotBlank()) {
-                            AvatarPicker(avatarBase64 = info.avatarBase64, size = 32, onClick = {})
+        // ========== 游戏中中途加入审批 AlertDialog (HOST only) ==========
+        val gamePendingRequest = state.pendingMidJoins.firstOrNull()
+        if (state.mode == TableMode.HOST && gamePendingRequest != null) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = {},
+                title = { Text("中途加入申请", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (gamePendingRequest.avatarBase64.isNotBlank()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                AvatarPicker(avatarBase64 = gamePendingRequest.avatarBase64, size = 48, onClick = {})
+                                Column {
+                                    Text(gamePendingRequest.playerName, fontWeight = FontWeight.SemiBold)
+                                    Text("买入: ${gamePendingRequest.buyIn}", fontSize = 13.sp, color = Color.Gray)
+                                }
+                            }
+                        } else {
+                            Text("${gamePendingRequest.playerName} 申请中途加入")
+                            Text("买入: ${gamePendingRequest.buyIn}", fontSize = 13.sp, color = Color.Gray)
                         }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(info.playerName, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Text("买入: ${info.buyIn}", fontSize = 11.sp, color = Color.Gray)
-                        }
+                    }
+                },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = { onApproveMidGameJoin(info.requestId) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            onClick = { onApproveMidGameJoin(gamePendingRequest.requestId) },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF43A047))
-                        ) { Text("同意", fontSize = 12.sp) }
-                        OutlinedButton(
-                            onClick = { onRejectMidGameJoin(info.requestId, false) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                        ) { Text("拒绝", fontSize = 12.sp) }
+                        ) { Text("同意") }
+                        OutlinedButton(onClick = { onRejectMidGameJoin(gamePendingRequest.requestId, false) }) { Text("拒绝") }
                         Button(
-                            onClick = { onRejectMidGameJoin(info.requestId, true) },
-                            modifier = Modifier.height(32.dp),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            onClick = { onRejectMidGameJoin(gamePendingRequest.requestId, true) },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
-                        ) { Text("屏蔽", fontSize = 12.sp) }
+                        ) { Text("屏蔽") }
                     }
                 }
-            }
-            Spacer(Modifier.height(4.dp))
+            )
         }
 
         // ========== 牌桌区域（矢量绘制椭圆桌 + 玩家环绕） ==========
