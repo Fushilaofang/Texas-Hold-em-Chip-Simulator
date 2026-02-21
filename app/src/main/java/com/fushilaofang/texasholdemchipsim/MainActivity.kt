@@ -235,6 +235,29 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                // 局域网断开横幅（在大厅/游戏界面显示）
+                if (state.lanDisconnected && state.mode != com.fushilaofang.texasholdemchipsim.ui.TableMode.IDLE) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFB71C1C))
+                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                "⚠️  局域网已断开，正在等待网络恢复…",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
                 // 等待房主重连弹窗
                 if (state.waitingForHostReconnect) {
                     androidx.compose.material3.AlertDialog(

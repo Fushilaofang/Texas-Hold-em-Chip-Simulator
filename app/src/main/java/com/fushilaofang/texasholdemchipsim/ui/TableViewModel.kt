@@ -2,6 +2,9 @@ package com.fushilaofang.texasholdemchipsim.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -83,6 +86,8 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
+    // --- 局域网断开状态 ---
+    val lanDisconnected: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -116,6 +121,12 @@ class TableViewModel(
     /** 设备唯一ID */
     private val deviceId: String = DeviceIdManager.getDeviceId(context.applicationContext)
 
+    /** 监听局域网连接状态 */
+    private val connectivityManager =
+        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var activeNetworkCount = 0
+
     /** 持有 CPU 唤醒锁，防止后台挂起导致心跳断线 */
     private val wakeLock: PowerManager.WakeLock? =
         (context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager)
@@ -128,6 +139,54 @@ class TableViewModel(
 
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock.release() } catch (_: Exception) {}
+    }
+
+    // ==================== 局域网连接监听 ====================
+
+    private fun startNetworkMonitoring() {
+        val cm = connectivityManager ?: return
+        // 检查初始状态
+        if (cm.activeNetwork == null) {
+            activeNetworkCount = 0
+            _uiState.update { it.copy(lanDisconnected = true) }
+        }
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                activeNetworkCount++
+                if (_uiState.value.lanDisconnected) {
+                    _uiState.update { it.copy(lanDisconnected = false, info = "局域网已恢复") }
+                    val mode = _uiState.value.mode
+                    if (mode == TableMode.HOST) {
+                        // 局域网恢复同时重启 UDP 广播
+                        viewModelScope.launch(Dispatchers.IO) {
+                            kotlinx.coroutines.delay(800)
+                            if (_uiState.value.mode == TableMode.HOST) startAdvertiser()
+                        }
+                    }
+                }
+            }
+            override fun onLost(network: Network) {
+                activeNetworkCount = (activeNetworkCount - 1).coerceAtLeast(0)
+                if (activeNetworkCount == 0 && !_uiState.value.lanDisconnected) {
+                    _uiState.update { it.copy(lanDisconnected = true, info = "局域网已断开") }
+                    val mode = _uiState.value.mode
+                    if (mode == TableMode.HOST) {
+                        // LAN 断开后停止 UDP 广播，避免无效包
+                        roomAdvertiser.stopBroadcast()
+                    }
+                }
+            }
+        }
+        networkCallback = callback
+        try {
+            cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback)
+        } catch (_: Exception) {}
+    }
+
+    private fun stopNetworkMonitoring() {
+        val cb = networkCallback ?: return
+        try { connectivityManager?.unregisterNetworkCallback(cb) } catch (_: Exception) {}
+        networkCallback = null
     }
 
     private val _uiState = MutableStateFlow(
@@ -144,6 +203,7 @@ class TableViewModel(
 
     init {
         loadSessionInfo()
+        startNetworkMonitoring()
     }
 
     // ==================== 用户设置持久化 ====================
@@ -1694,6 +1754,7 @@ class TableViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        stopNetworkMonitoring()
         releaseWakeLock()
         roomAdvertiser.close()
         roomScanner.close()
