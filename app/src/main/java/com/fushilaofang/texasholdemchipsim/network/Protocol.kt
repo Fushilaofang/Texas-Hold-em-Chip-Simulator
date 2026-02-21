@@ -134,6 +134,11 @@ sealed class NetworkMessage {
         val avatarBase64: String = ""
     ) : NetworkMessage()
 
+    /** 客户端 → 服务端：取消中途加入申请（等待审批或已批准等待下一手期间均可调用） */
+    @Serializable
+    @SerialName("mid_game_join_cancel")
+    data object MidGameJoinCancel : NetworkMessage()
+
     /** 服务端 → 中途加入申请者：申请已收到，等待房主审批 */
     @Serializable
     @SerialName("mid_game_join_pending")

@@ -82,6 +82,8 @@ class LanTableServer(
         data class PlayerRejoinedByDevice(val playerId: String, val newName: String, val avatarBase64: String) : Event()
         /** 有新玩家申请中途加入游戏，需要房主审批 */
         data class MidGameJoinRequested(val requestId: String, val playerName: String, val buyIn: Int, val deviceId: String, val avatarBase64: String) : Event()
+        /** 中途加入的玩家主动取消了申请或已批准的等待 */
+        data class MidGameJoinCancelled(val requestId: String, val assignedPlayerId: String?) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -359,6 +361,32 @@ class LanTableServer(
 
                         is NetworkMessage.SubmitContribution -> {
                             onEvent(Event.ContributionReceived(msg.playerId, msg.amount))
+                        }
+
+                        is NetworkMessage.MidGameJoinCancel -> {
+                            // 客户端主动取消中途加入
+                            // 1. 查找是否在 pending 审批队列中（通过 socket 匹配）
+                            val cancelledEntry = synchronized(pendingMidJoinsLock) {
+                                val entry = pendingMidJoins.entries.firstOrNull { it.value.socket === socket }
+                                if (entry != null) {
+                                    pendingMidJoins.remove(entry.key)
+                                    entry
+                                } else null
+                            }
+                            if (cancelledEntry != null) {
+                                cancelledEntry.value.approval.complete(null)
+                                onEvent(Event.MidGameJoinCancelled(cancelledEntry.key, null))
+                            } else {
+                                // 2. 已批准、正在等待下一手的玩家取消
+                                val pid = assignedId
+                                if (pid != null) {
+                                    onEvent(Event.MidGameJoinCancelled("", pid))
+                                    // 断开连接
+                                    synchronized(clientsLock) { clients.remove(pid) }
+                                    runCatching { socket.close() }
+                                    return@launch
+                                }
+                            }
                         }
 
                         is NetworkMessage.ReadyToggle -> {
@@ -968,6 +996,18 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.Fold(playerId = playerId)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun sendMidGameJoinCancel() {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.MidGameJoinCancel
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()

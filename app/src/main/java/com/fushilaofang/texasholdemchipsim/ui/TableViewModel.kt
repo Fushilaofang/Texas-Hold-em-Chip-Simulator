@@ -463,6 +463,15 @@ class TableViewModel(
         server.rejectMidGameJoin(requestId, block)
     }
 
+    /** 客户端主动取消中途加入申请（等待审批或已批准等待下一手） */
+    fun cancelMidGameJoin() {
+        val state = _uiState.value
+        if (state.mode != TableMode.CLIENT) return
+        client.sendMidGameJoinCancel()
+        _uiState.update { it.copy(midGameJoinStatus = MidGameJoinStatus.NONE) }
+        goHome()
+    }
+
     // ==================== 准备 / 开始游戏 ====================
 
     /** 非房主玩家切换准备状态；游戏进行中且自己尚未入列时触发中途加入申请 */
@@ -1528,6 +1537,25 @@ class TableViewModel(
                         info = "${event.playerName} 申请中途加入"
                     )
                 }
+            }
+            is LanTableServer.Event.MidGameJoinCancelled -> {
+                // 玩家取消了中途加入
+                _uiState.update { state ->
+                    val updatedPlayers = if (event.assignedPlayerId != null) {
+                        state.players.filter { it.id != event.assignedPlayerId }
+                    } else state.players
+                    val updatedWaiting = if (event.assignedPlayerId != null) {
+                        state.midGameWaitingPlayerIds - event.assignedPlayerId
+                    } else state.midGameWaitingPlayerIds
+                    state.copy(
+                        pendingMidJoins = if (event.requestId.isNotBlank()) state.pendingMidJoins.filter { it.requestId != event.requestId } else state.pendingMidJoins,
+                        players = updatedPlayers,
+                        midGameWaitingPlayerIds = updatedWaiting,
+                        info = "一位中途加入者取消了申请"
+                    )
+                }
+                syncToClients()
+                saveSession()
             }
             else -> Unit
         }
