@@ -14,7 +14,9 @@ sealed class NetworkMessage {
         val playerName: String,
         val buyIn: Int,
         /** 设备唯一编码，用于识别同一台设备的玩家并防止重复账号 */
-        val deviceId: String = ""
+        val deviceId: String = "",
+        /** 申请加入者的头像（Base64），用于房主审批时展示 */
+        val avatarBase64: String = ""
     ) : NetworkMessage()
 
     @Serializable
@@ -41,7 +43,11 @@ sealed class NetworkMessage {
         val currentTurnPlayerId: String = "",
         val roundContributions: Map<String, Int> = emptyMap(),
         val actedPlayerIds: Set<String> = emptySet(),
-        val initialDealerIndex: Int = 0
+        val initialDealerIndex: Int = 0,
+        /** 已批准中途加入、等待下一手的玩家 ID 集合 */
+        val midGameWaitingPlayerIds: Set<String> = emptySet(),
+        /** 房主是否允许中途加入 */
+        val allowMidGameJoin: Boolean = false
     ) : NetworkMessage()
 
     /**
@@ -126,5 +132,18 @@ sealed class NetworkMessage {
         val playerId: String,
         val newName: String,
         val avatarBase64: String = ""
+    ) : NetworkMessage()
+
+    /** 服务端 → 中途加入申请者：申请已收到，等待房主审批 */
+    @Serializable
+    @SerialName("mid_game_join_pending")
+    data object MidGameJoinPending : NetworkMessage()
+
+    /** 服务端 → 中途加入申请者：房主拒绝或屏蔽 */
+    @Serializable
+    @SerialName("mid_game_join_rejected")
+    data class MidGameJoinRejected(
+        val reason: String = "",
+        val blocked: Boolean = false
     ) : NetworkMessage()
 }

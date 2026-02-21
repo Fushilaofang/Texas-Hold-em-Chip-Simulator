@@ -2,9 +2,6 @@ package com.fushilaofang.texasholdemchipsim.ui
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkRequest
 import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -54,6 +51,17 @@ enum class BettingRound {
     PRE_FLOP, FLOP, TURN, RIVER, SHOWDOWN
 }
 
+/** 中途加入申请信息（仅房主展示） */
+data class PendingMidJoinInfo(
+    val requestId: String,
+    val playerName: String,
+    val buyIn: Int,
+    val avatarBase64: String = ""
+)
+
+/** 客户端中途加入的审批状态 */
+enum class MidGameJoinStatus { NONE, PENDING, REJECTED, BLOCKED }
+
 data class TableUiState(
     val mode: TableMode = TableMode.IDLE,
     val screen: ScreenState = ScreenState.HOME,
@@ -86,8 +94,6 @@ data class TableUiState(
     val disconnectedPlayerIds: Set<String> = emptySet(),
     // --- 等待房主重连 ---
     val waitingForHostReconnect: Boolean = false,
-    // --- 局域网断开状态 ---
-    val lanDisconnected: Boolean = false,
     // --- 重新加入 ---
     val canRejoin: Boolean = false,
     val lastSessionTableName: String = "",
@@ -101,7 +107,12 @@ data class TableUiState(
     val savedBuyIn: Int = 1000,
     val savedSmallBlind: Int = 10,
     val savedBigBlind: Int = 20,
-    val savedAvatarBase64: String = ""  // 本机玩家头像
+    val savedAvatarBase64: String = "",  // 本机玩家头像
+    // --- 中途加入 ---
+    val allowMidGameJoin: Boolean = false,
+    val pendingMidJoins: List<PendingMidJoinInfo> = emptyList(),
+    val midGameJoinStatus: MidGameJoinStatus = MidGameJoinStatus.NONE,
+    val midGameWaitingPlayerIds: Set<String> = emptySet()
 )
 
 class TableViewModel(
@@ -121,12 +132,6 @@ class TableViewModel(
     /** 设备唯一ID */
     private val deviceId: String = DeviceIdManager.getDeviceId(context.applicationContext)
 
-    /** 监听局域网连接状态 */
-    private val connectivityManager =
-        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var activeNetworkCount = 0
-
     /** 持有 CPU 唤醒锁，防止后台挂起导致心跳断线 */
     private val wakeLock: PowerManager.WakeLock? =
         (context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager)
@@ -139,76 +144,6 @@ class TableViewModel(
 
     private fun releaseWakeLock() {
         try { if (wakeLock?.isHeld == true) wakeLock.release() } catch (_: Exception) {}
-    }
-
-    // ==================== 局域网连接监听 ====================
-
-    private fun startNetworkMonitoring() {
-        val cm = connectivityManager ?: return
-        // 检查初始状态
-        if (cm.activeNetwork == null) {
-            activeNetworkCount = 0
-            _uiState.update { it.copy(lanDisconnected = true) }
-        }
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                activeNetworkCount++
-                if (_uiState.value.lanDisconnected) {
-                    val selfId = _uiState.value.selfId
-                    _uiState.update { state ->
-                        state.copy(
-                            lanDisconnected = false,
-                            info = "局域网已恢复",
-                            // 移除自己的掉线标记；远端玩家通过各自重连流程恢复
-                            disconnectedPlayerIds = state.disconnectedPlayerIds - selfId
-                        )
-                    }
-                    val mode = _uiState.value.mode
-                    if (mode == TableMode.HOST) {
-                        // 局域网恢复同时重启 UDP 广播
-                        viewModelScope.launch(Dispatchers.IO) {
-                            kotlinx.coroutines.delay(800)
-                            if (_uiState.value.mode == TableMode.HOST) startAdvertiser()
-                        }
-                    }
-                }
-            }
-            override fun onLost(network: Network) {
-                activeNetworkCount = (activeNetworkCount - 1).coerceAtLeast(0)
-                if (activeNetworkCount == 0 && !_uiState.value.lanDisconnected) {
-                    val cur = _uiState.value
-                    val selfId = cur.selfId
-                    // HOST：立即将所有远端玩家标记为掉线，无需等 60 秒心跳超时
-                    // CLIENT：将自己标记为掉线（对本地 UI 可见）
-                    val newDisconnected = when (cur.mode) {
-                        TableMode.HOST -> cur.disconnectedPlayerIds +
-                            cur.players.filter { it.id != selfId }.map { it.id }.toSet()
-                        TableMode.CLIENT -> cur.disconnectedPlayerIds + selfId
-                        TableMode.IDLE -> cur.disconnectedPlayerIds
-                    }
-                    _uiState.update { it.copy(
-                        lanDisconnected = true,
-                        info = "局域网已断开",
-                        disconnectedPlayerIds = newDisconnected
-                    ) }
-                    if (cur.mode == TableMode.HOST) {
-                        // LAN 断开后停止 UDP 广播，避免无效包
-                        roomAdvertiser.stopBroadcast()
-                        syncToClients()
-                    }
-                }
-            }
-        }
-        networkCallback = callback
-        try {
-            cm.registerNetworkCallback(NetworkRequest.Builder().build(), callback)
-        } catch (_: Exception) {}
-    }
-
-    private fun stopNetworkMonitoring() {
-        val cb = networkCallback ?: return
-        try { connectivityManager?.unregisterNetworkCallback(cb) } catch (_: Exception) {}
-        networkCallback = null
     }
 
     private val _uiState = MutableStateFlow(
@@ -225,7 +160,6 @@ class TableViewModel(
 
     init {
         loadSessionInfo()
-        startNetworkMonitoring()
     }
 
     // ==================== 用户设置持久化 ====================
@@ -440,7 +374,7 @@ class TableViewModel(
             )
         }
 
-        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, deviceId, ::handleClientEvent)
+        client.connect(room.hostIp, playerName.ifBlank { "玩家" }, buyIn, deviceId, _uiState.value.savedAvatarBase64, ::handleClientEvent)
         acquireWakeLock()
     }
 
@@ -482,6 +416,53 @@ class TableViewModel(
         }
     }
 
+    // ==================== 中途加入管理（房主） ====================
+
+    fun toggleAllowMidGameJoin(enabled: Boolean) {
+        if (_uiState.value.mode != TableMode.HOST) return
+        _uiState.update { it.copy(allowMidGameJoin = enabled) }
+        syncToClients()
+    }
+
+    fun approveMidGameJoin(requestId: String) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val pending = state.pendingMidJoins.firstOrNull { it.requestId == requestId } ?: return
+        val newPlayerId = UUID.randomUUID().toString()
+        val seatOrder = state.players.size
+        val player = PlayerState(
+            id = newPlayerId,
+            name = pending.playerName,
+            chips = pending.buyIn,
+            seatOrder = seatOrder,
+            avatarBase64 = pending.avatarBase64
+        )
+        _uiState.update { s ->
+            s.copy(
+                players = s.players + player,
+                midGameWaitingPlayerIds = s.midGameWaitingPlayerIds + newPlayerId,
+                pendingMidJoins = s.pendingMidJoins.filter { it.requestId != requestId },
+                info = "${pending.playerName} 的加入请求已批准，等待下一手..."
+            )
+        }
+        server.approveMidGameJoin(requestId, newPlayerId)
+        syncToClients()
+        saveSession()
+    }
+
+    fun rejectMidGameJoin(requestId: String, block: Boolean) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val pending = state.pendingMidJoins.firstOrNull { it.requestId == requestId } ?: return
+        _uiState.update { s ->
+            s.copy(
+                pendingMidJoins = s.pendingMidJoins.filter { it.requestId != requestId },
+                info = "${pending.playerName} 的加入请求已${if (block) "屏蔽" else "拒绝"}"
+            )
+        }
+        server.rejectMidGameJoin(requestId, block)
+    }
+
     // ==================== 准备 / 开始游戏 ====================
 
     /** 非房主玩家切换准备状态 */
@@ -515,7 +496,8 @@ class TableViewModel(
         val sorted = state.players.sortedBy { it.seatOrder }
         return sorted.filter { p ->
             !state.foldedPlayerIds.contains(p.id) &&
-            !state.disconnectedPlayerIds.contains(p.id)
+            !state.disconnectedPlayerIds.contains(p.id) &&
+            !state.midGameWaitingPlayerIds.contains(p.id)
         }
     }
 
@@ -1109,7 +1091,8 @@ class TableViewModel(
                 blindsState = newBlinds,
                 foldedPlayerIds = emptySet(),
                 contributionInputs = emptyMap(),
-                roundContributions = blindPrefills
+                roundContributions = blindPrefills,
+                midGameWaitingPlayerIds = emptySet()  // 中途等待玩家此时正式加入
             )
             val firstTurn = getPreFlopFirstPlayerId(tmpState, newBlinds)
             val firstName = playersAfterBlinds.sortedBy { it.seatOrder }
@@ -1138,6 +1121,7 @@ class TableViewModel(
                     currentTurnPlayerId = firstTurn,
                     roundContributions = blindPrefills,
                     actedPlayerIds = blindAllInActed,
+                    midGameWaitingPlayerIds = emptySet(),
                     info = infoText
                 )
             }
@@ -1148,7 +1132,8 @@ class TableViewModel(
                 blindsState = newBlinds,
                 foldedPlayerIds = emptySet(),
                 contributionInputs = emptyMap(),
-                roundContributions = emptyMap()
+                roundContributions = emptyMap(),
+                midGameWaitingPlayerIds = emptySet()  // 中途等待玩家此时正式加入
             )
             val firstTurn = getPostFlopFirstPlayerId(tmpState, newBlinds)
             val firstName = playersAfterSettle.sortedBy { it.seatOrder }
@@ -1174,6 +1159,7 @@ class TableViewModel(
                     currentTurnPlayerId = firstTurn,
                     roundContributions = emptyMap(),
                     actedPlayerIds = emptySet(),
+                    midGameWaitingPlayerIds = emptySet(),
                     info = infoText
                 )
             }
@@ -1372,7 +1358,9 @@ class TableViewModel(
                     currentTurnPlayerId = state.currentTurnPlayerId,
                     roundContributions = state.roundContributions,
                     actedPlayerIds = state.actedPlayerIds,
-                    initialDealerIndex = state.initialDealerIndex
+                    initialDealerIndex = state.initialDealerIndex,
+                    midGameWaitingPlayerIds = state.midGameWaitingPlayerIds,
+                    allowMidGameJoin = state.allowMidGameJoin
                 )
             }
         }
@@ -1400,6 +1388,8 @@ class TableViewModel(
             currentTurnPlayerIdProvider = { _uiState.value.currentTurnPlayerId },
             roundContributionsProvider = { _uiState.value.roundContributions },
             actedPlayerIdsProvider = { _uiState.value.actedPlayerIds },
+            allowMidGameJoinProvider = { _uiState.value.allowMidGameJoin },
+            midGameWaitingPlayerIdsProvider = { _uiState.value.midGameWaitingPlayerIds },
             onPlayerJoined = { player ->
                 _uiState.update { state ->
                     state.copy(players = state.players + player, info = "${player.name} 已加入房间")
@@ -1516,6 +1506,21 @@ class TableViewModel(
                 syncToClients()
                 saveSession()
             }
+            is LanTableServer.Event.MidGameJoinRequested -> {
+                // 有玩家申请中途加入，展示给房主审批
+                val newPending = PendingMidJoinInfo(
+                    requestId = event.requestId,
+                    playerName = event.playerName,
+                    buyIn = event.buyIn,
+                    avatarBase64 = event.avatarBase64
+                )
+                _uiState.update { state ->
+                    state.copy(
+                        pendingMidJoins = state.pendingMidJoins + newPending,
+                        info = "${event.playerName} 申请中途加入"
+                    )
+                }
+            }
             else -> Unit
         }
     }
@@ -1534,7 +1539,13 @@ class TableViewModel(
             }
             is LanTableClient.Event.StateSync -> {
                 _uiState.update {
-                    val newScreen = if (event.gameStarted) ScreenState.GAME else it.screen
+                    val selfId = it.selfId
+                    val isMidGameWaiting = selfId.isNotBlank() && event.midGameWaitingPlayerIds.contains(selfId)
+                    // 中途等待玩家留在 LOBBY，其其余 gameStarted=true 则进 GAME
+                    val newScreen = when {
+                        event.gameStarted && !isMidGameWaiting -> ScreenState.GAME
+                        else -> it.screen
+                    }
                     val round = try { BettingRound.valueOf(event.currentRound) } catch (_: Exception) { BettingRound.PRE_FLOP }
                     it.copy(
                         screen = newScreen,
@@ -1553,7 +1564,9 @@ class TableViewModel(
                         roundContributions = event.roundContributions,
                         actedPlayerIds = event.actedPlayerIds,
                         initialDealerIndex = event.initialDealerIndex,
-                        info = if (event.gameStarted) "牌局状态已同步" else "等待房主开始游戏"
+                        midGameWaitingPlayerIds = event.midGameWaitingPlayerIds,
+                        allowMidGameJoin = event.allowMidGameJoin,
+                        info = if (event.gameStarted && !isMidGameWaiting) "牌局状态已同步" else if (isMidGameWaiting) "已批准加入，等待下一手开始" else "等待房主开始游戏"
                     )
                 }
                 saveSession()
@@ -1572,6 +1585,19 @@ class TableViewModel(
             }
             is LanTableClient.Event.ReconnectFailed -> {
                 _uiState.update { it.copy(waitingForHostReconnect = false, info = event.reason) }
+            }
+            is LanTableClient.Event.MidGameJoinPending -> {
+                _uiState.update { it.copy(
+                    screen = ScreenState.LOBBY,
+                    midGameJoinStatus = MidGameJoinStatus.PENDING,
+                    info = "申请已提交，等待房主审批..."
+                ) }
+            }
+            is LanTableClient.Event.MidGameJoinRejected -> {
+                _uiState.update { it.copy(
+                    midGameJoinStatus = if (event.blocked) MidGameJoinStatus.BLOCKED else MidGameJoinStatus.REJECTED,
+                    info = event.reason
+                ) }
             }
         }
     }
@@ -1776,7 +1802,6 @@ class TableViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        stopNetworkMonitoring()
         releaseWakeLock()
         roomAdvertiser.close()
         roomScanner.close()

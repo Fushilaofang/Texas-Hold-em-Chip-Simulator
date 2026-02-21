@@ -17,7 +17,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 
 private const val DEFAULT_PORT = 45454
@@ -39,6 +41,25 @@ class LanTableServer(
     private val disconnectedPlayers = mutableMapOf<String, Long>()
     private val disconnectedLock = Any()
 
+    /** 已被房主屏蔽的设备ID */
+    private val blockedDeviceIds = mutableSetOf<String>()
+    private val blockedLock = Any()
+
+    /** 正在等待房主审批的中途加入申请 */
+    private val pendingMidJoins = mutableMapOf<String, PendingMidJoin>()
+    private val pendingMidJoinsLock = Any()
+
+    private data class PendingMidJoin(
+        val requestId: String,
+        val playerName: String,
+        val buyIn: Int,
+        val deviceId: String,
+        val avatarBase64: String,
+        val writer: BufferedWriter,
+        val socket: Socket,
+        val approval: CompletableDeferred<String?>  // null = 拒绝/超时
+    )
+
     sealed class Event {
         data class PlayerJoined(val player: PlayerState) : Event()
         data class PlayerDisconnected(val playerId: String) : Event()
@@ -59,6 +80,8 @@ class LanTableServer(
         data class ProfileUpdateReceived(val playerId: String, val newName: String, val avatarBase64: String) : Event()
         /** 同一设备以新昵称/头像重新进入房间，应复用原有玩家槽位 */
         data class PlayerRejoinedByDevice(val playerId: String, val newName: String, val avatarBase64: String) : Event()
+        /** 有新玩家申请中途加入游戏，需要房主审批 */
+        data class MidGameJoinRequested(val requestId: String, val playerName: String, val buyIn: Int, val deviceId: String, val avatarBase64: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -87,6 +110,8 @@ class LanTableServer(
         currentTurnPlayerIdProvider: () -> String = { "" },
         roundContributionsProvider: () -> Map<String, Int> = { emptyMap() },
         actedPlayerIdsProvider: () -> Set<String> = { emptySet() },
+        allowMidGameJoinProvider: () -> Boolean = { false },
+        midGameWaitingPlayerIdsProvider: () -> Set<String> = { emptySet() },
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -118,6 +143,8 @@ class LanTableServer(
                             currentTurnPlayerIdProvider = currentTurnPlayerIdProvider,
                             roundContributionsProvider = roundContributionsProvider,
                             actedPlayerIdsProvider = actedPlayerIdsProvider,
+                            allowMidGameJoinProvider = allowMidGameJoinProvider,
+                            midGameWaitingPlayerIdsProvider = midGameWaitingPlayerIdsProvider,
                             onPlayerJoined = onPlayerJoined,
                             onEvent = onEvent
                         )
@@ -187,7 +214,9 @@ class LanTableServer(
         currentTurnPlayerId: String = "",
         roundContributions: Map<String, Int> = emptyMap(),
         actedPlayerIds: Set<String> = emptySet(),
-        initialDealerIndex: Int = 0
+        initialDealerIndex: Int = 0,
+        midGameWaitingPlayerIds: Set<String> = emptySet(),
+        allowMidGameJoin: Boolean = false
     ) {
         val message = NetworkMessage.StateSync(
             players = players,
@@ -204,7 +233,9 @@ class LanTableServer(
             currentTurnPlayerId = currentTurnPlayerId,
             roundContributions = roundContributions,
             actedPlayerIds = actedPlayerIds,
-            initialDealerIndex = initialDealerIndex
+            initialDealerIndex = initialDealerIndex,
+            midGameWaitingPlayerIds = midGameWaitingPlayerIds,
+            allowMidGameJoin = allowMidGameJoin
         )
         val text = json.encodeToString(NetworkMessage.serializer(), message)
         val stale = mutableListOf<String>()
@@ -229,10 +260,46 @@ class LanTableServer(
         }
     }
 
+    /** 房主批准某个中途加入申请，唤醒挂起的协程完成注册 */
+    fun approveMidGameJoin(requestId: String, newPlayerId: String) {
+        val pending = synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(requestId) } ?: return
+        pending.approval.complete(newPlayerId)
+    }
+
+    /** 房主拒绝/屏蔽某个中途加入申请 */
+    fun rejectMidGameJoin(requestId: String, block: Boolean) {
+        val pending = synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(requestId) } ?: return
+        if (block) {
+            synchronized(blockedLock) { blockedDeviceIds.add(pending.deviceId) }
+        }
+        // 向客户端发送拒绝消息
+        scope.launch(Dispatchers.IO) {
+            try {
+                val reason = if (block) "您已被房主屏蔽" else "房主已拒绝您的申请"
+                val msg = json.encodeToString(
+                    NetworkMessage.serializer(),
+                    NetworkMessage.MidGameJoinRejected(reason = reason, blocked = block)
+                )
+                pending.writer.write(msg)
+                pending.writer.newLine()
+                pending.writer.flush()
+                kotlinx.coroutines.delay(200)
+            } catch (_: Exception) {}
+            runCatching { pending.socket.close() }
+        }
+        pending.approval.complete(null)
+    }
+
     fun stop() {
         heartbeatJob?.cancel()
         heartbeatJob = null
         synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        // 拒绝所有正在等待审批的中途加入申请
+        val snapshot = synchronized(pendingMidJoinsLock) { pendingMidJoins.toMap().also { pendingMidJoins.clear() } }
+        snapshot.values.forEach { p ->
+            p.approval.complete(null)
+            runCatching { p.socket.close() }
+        }
         synchronized(clientsLock) {
             clients.values.forEach {
                 runCatching { it.socket.close() }
@@ -265,6 +332,8 @@ class LanTableServer(
         currentTurnPlayerIdProvider: () -> String,
         roundContributionsProvider: () -> Map<String, Int>,
         actedPlayerIdsProvider: () -> Set<String>,
+        allowMidGameJoinProvider: () -> Boolean,
+        midGameWaitingPlayerIdsProvider: () -> Set<String>,
         onPlayerJoined: (PlayerState) -> Unit,
         onEvent: (Event) -> Unit
     ) {
@@ -342,7 +411,9 @@ class LanTableServer(
                                     currentRound = currentRoundProvider(),
                                     currentTurnPlayerId = currentTurnPlayerIdProvider(),
                                     roundContributions = roundContributionsProvider(),
-                                    actedPlayerIds = actedPlayerIdsProvider()
+                                    actedPlayerIds = actedPlayerIdsProvider(),
+                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                    allowMidGameJoin = allowMidGameJoinProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                                 writer.newLine()
@@ -415,7 +486,9 @@ class LanTableServer(
                                     currentRound = currentRoundProvider(),
                                     currentTurnPlayerId = currentTurnPlayerIdProvider(),
                                     roundContributions = roundContributionsProvider(),
-                                    actedPlayerIds = actedPlayerIdsProvider()
+                                    actedPlayerIds = actedPlayerIdsProvider(),
+                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                    allowMidGameJoin = allowMidGameJoinProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                                 writer.newLine()
@@ -436,16 +509,91 @@ class LanTableServer(
                                 }
 
                                 onEvent(Event.PlayerRejoinedByDevice(oldId, msg.playerName, ""))
-                            } else {
-                                // 全新玩家加入：游戏进行中不允许
-                                if (gameStartedProvider()) {
-                                    val err = NetworkMessage.Error(reason = "游戏已开始，无法加入")
+                            } else if (gameStartedProvider()) {
+                                // 游戏进行中 — 中途加入流程
+                                if (msg.deviceId.isNotBlank() && synchronized(blockedLock) { blockedDeviceIds.contains(msg.deviceId) }) {
+                                    val err = NetworkMessage.Error(reason = "你已被房主屏蔽，无法加入该房间")
                                     writer.write(json.encodeToString(NetworkMessage.serializer(), err))
-                                    writer.newLine()
-                                    writer.flush()
-                                    socket.close()
+                                    writer.newLine(); writer.flush()
+                                    socket.close(); return@launch
+                                }
+                                if (!allowMidGameJoinProvider()) {
+                                    val err = NetworkMessage.Error(reason = "游戏已开始，房主未开放中途加入")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    writer.newLine(); writer.flush()
+                                    socket.close(); return@launch
+                                }
+                                // 发送“等待房主审批”通知
+                                val requestId = UUID.randomUUID().toString()
+                                val approval = CompletableDeferred<String?>()
+                                val pending = PendingMidJoin(
+                                    requestId = requestId,
+                                    playerName = msg.playerName,
+                                    buyIn = msg.buyIn,
+                                    deviceId = msg.deviceId,
+                                    avatarBase64 = msg.avatarBase64,
+                                    writer = writer,
+                                    socket = socket,
+                                    approval = approval
+                                )
+                                synchronized(pendingMidJoinsLock) { pendingMidJoins[requestId] = pending }
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), NetworkMessage.MidGameJoinPending))
+                                writer.newLine(); writer.flush()
+                                onEvent(Event.MidGameJoinRequested(requestId, msg.playerName, msg.buyIn, msg.deviceId, msg.avatarBase64))
+
+                                // 挂起等待房主审批（最多等 5 分钟）
+                                val approvedId = withTimeoutOrNull(300_000L) { approval.await() }
+                                synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(requestId) }
+
+                                if (approvedId == null) {
+                                    // 房主拒绝/超时：rejectMidGameJoin 已处理通知客户端
+                                    runCatching { socket.close() }
                                     return@launch
                                 }
+
+                                // 房主已同意 — 此时 ViewModel 已将玩家加入 state
+                                assignedId = approvedId
+                                synchronized(clientsLock) {
+                                    clients.remove(approvedId)?.let { old ->
+                                        old.readerJob.cancel()
+                                        runCatching { old.socket.close() }
+                                    }
+                                    clients[approvedId] = ClientConnection(
+                                        playerId = approvedId,
+                                        socket = socket,
+                                        writer = writer,
+                                        readerJob = this.coroutineContext[Job]
+                                            ?: error("missing coroutine job")
+                                    )
+                                }
+                                // 发送 JoinAccepted
+                                val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = approvedId)
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
+                                writer.newLine(); writer.flush()
+                                // 发送当前完整状态（包含新玩家自己 + midGameWaitingPlayerIds）
+                                val sync = NetworkMessage.StateSync(
+                                    players = hostPlayersProvider(),
+                                    handCounter = handCounterProvider(),
+                                    transactions = txProvider().takeLast(50),
+                                    contributions = contributionsProvider(),
+                                    blindsState = blindsStateProvider(),
+                                    blindsEnabled = blindsEnabledProvider(),
+                                    sidePotEnabled = sidePotEnabledProvider(),
+                                    selectedWinnerIds = selectedWinnerIdsProvider(),
+                                    foldedPlayerIds = foldedPlayerIdsProvider(),
+                                    gameStarted = gameStartedProvider(),
+                                    currentRound = currentRoundProvider(),
+                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                    roundContributions = roundContributionsProvider(),
+                                    actedPlayerIds = actedPlayerIdsProvider(),
+                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                    allowMidGameJoin = allowMidGameJoinProvider()
+                                )
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                writer.newLine(); writer.flush()
+                                // 后续不返回，继续监听该客户端的消息
+                            } else {
+                                // 全新玩家正常加入（游戏未开始）
                                 val playerId = UUID.randomUUID().toString()
                                 assignedId = playerId
                                 val seatOrder = hostPlayersProvider().size
@@ -454,7 +602,8 @@ class LanTableServer(
                                     name = msg.playerName,
                                     chips = msg.buyIn,
                                     seatOrder = seatOrder,
-                                    deviceId = msg.deviceId
+                                    deviceId = msg.deviceId,
+                                    avatarBase64 = msg.avatarBase64
                                 )
                                 onPlayerJoined(joined)
 
@@ -477,7 +626,8 @@ class LanTableServer(
                                     currentRound = currentRoundProvider(),
                                     currentTurnPlayerId = currentTurnPlayerIdProvider(),
                                     roundContributions = roundContributionsProvider(),
-                                    actedPlayerIds = actedPlayerIdsProvider()
+                                    actedPlayerIds = actedPlayerIdsProvider(),
+                                    allowMidGameJoin = allowMidGameJoinProvider()
                                 )
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
                                 writer.newLine()
@@ -557,19 +707,25 @@ class LanTableClient(
             val currentTurnPlayerId: String = "",
             val roundContributions: Map<String, Int> = emptyMap(),
             val actedPlayerIds: Set<String> = emptySet(),
-            val initialDealerIndex: Int = 0
+            val initialDealerIndex: Int = 0,
+            val midGameWaitingPlayerIds: Set<String> = emptySet(),
+            val allowMidGameJoin: Boolean = false
         ) : Event()
 
         data class Disconnected(val willReconnect: Boolean) : Event()
         data class Reconnected(val playerId: String) : Event()
         data class ReconnectFailed(val reason: String) : Event()
+        /** 申请中途加入已提交，等待房主审批 */
+        data object MidGameJoinPending : Event()
+        /** 房主拒绝或屏蔽了中途加入申请 */
+        data class MidGameJoinRejected(val reason: String, val blocked: Boolean) : Event()
         data class Error(val message: String) : Event()
     }
 
     @Volatile
     private var writer: BufferedWriter? = null
 
-    fun connect(hostIp: String, playerName: String, buyIn: Int, deviceId: String = "", onEvent: (Event) -> Unit) {
+    fun connect(hostIp: String, playerName: String, buyIn: Int, deviceId: String = "", avatarBase64: String = "", onEvent: (Event) -> Unit) {
         disconnect()
         lastHostIp = hostIp
         lastPlayerName = playerName
@@ -579,7 +735,7 @@ class LanTableClient(
         reconnecting = false
         shouldReconnect = true
 
-        doConnect(hostIp, playerName, buyIn, deviceId, isReconnect = false, onEvent = onEvent)
+        doConnect(hostIp, playerName, buyIn, deviceId, avatarBase64, isReconnect = false, onEvent = onEvent)
     }
 
     private fun doConnect(
@@ -587,6 +743,7 @@ class LanTableClient(
         playerName: String,
         buyIn: Int,
         deviceId: String = "",
+        avatarBase64: String = "",
         isReconnect: Boolean,
         onEvent: (Event) -> Unit
     ) {
@@ -616,7 +773,7 @@ class LanTableClient(
                     w.flush()
                 } else {
                     // 发送首次加入请求
-                    val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn, deviceId = deviceId)
+                    val join = NetworkMessage.JoinRequest(playerName = playerName, buyIn = buyIn, deviceId = deviceId, avatarBase64 = avatarBase64)
                     w.write(json.encodeToString(NetworkMessage.serializer(), join))
                     w.newLine()
                     w.flush()
@@ -670,7 +827,9 @@ class LanTableClient(
                                     currentTurnPlayerId = msg.currentTurnPlayerId,
                                     roundContributions = msg.roundContributions,
                                     actedPlayerIds = msg.actedPlayerIds,
-                                    initialDealerIndex = msg.initialDealerIndex
+                                    initialDealerIndex = msg.initialDealerIndex,
+                                    midGameWaitingPlayerIds = msg.midGameWaitingPlayerIds,
+                                    allowMidGameJoin = msg.allowMidGameJoin
                                 )
                             )
                         }
@@ -691,6 +850,8 @@ class LanTableClient(
                         is NetworkMessage.Pong -> { /* 忽略，保活即可 */ }
 
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
+                        is NetworkMessage.MidGameJoinPending -> onEvent(Event.MidGameJoinPending)
+                        is NetworkMessage.MidGameJoinRejected -> onEvent(Event.MidGameJoinRejected(msg.reason, msg.blocked))
                         else -> Unit
                     }
                 }
@@ -740,7 +901,7 @@ class LanTableClient(
                 if (reachable) {
                     // 房主已上线，执行完整重连
                     reconnecting = false
-                    doConnect(ip, name, lastBuyIn, deviceId, isReconnect = true, onEvent = onEvent)
+                    doConnect(ip, name, lastBuyIn, deviceId, "", isReconnect = true, onEvent = onEvent)
                     return@launch
                 }
             }
