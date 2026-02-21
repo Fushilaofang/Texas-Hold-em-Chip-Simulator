@@ -455,9 +455,15 @@ class TableViewModel(
         }
         if (actionable.isEmpty()) return ""
 
+        // 兜底：唯一可行动玩家且已行动 → 直接推进轮次
+        if (actionable.size == 1 && state.actedPlayerIds.contains(actionable[0].id)) return ""
+
         val currentIdx = actionable.indexOfFirst { it.id == afterPlayerId }
         if (currentIdx != -1) {
-            return actionable[(currentIdx + 1) % actionable.size].id
+            val nextIdx = (currentIdx + 1) % actionable.size
+            // 再次回到自己且已行动 → 轮次完成
+            if (nextIdx == currentIdx) return ""
+            return actionable[nextIdx].id
         }
 
         // afterPlayerId 不在 actionable 中（如刚弃牌/all-in），按座位找下一个
@@ -500,16 +506,26 @@ class TableViewModel(
      * 检查当前轮是否完成：
      * - 所有活跃玩家都已行动（actedPlayerIds）
      * - 所有已行动的玩家投入匹配最高投入（或已 all-in）
+     *
+     * 关键：All-In 玩家无法再行动，视为永久"已行动"，
+     *       不要求出现在 actedPlayerIds 中，避免加注清空 acted 集合后死循环。
      */
     private fun isRoundComplete(state: TableUiState): Boolean {
         val activePlayers = getActivePlayers(state)
         if (activePlayers.size <= 1) return true
 
+        // 若除 all-in 玩家外只剩 0 位可行动玩家，直接完成
+        val actionablePlayers = activePlayers.filter { !isPlayerAllIn(state, it) }
+        if (actionablePlayers.isEmpty()) return true
+
         val maxBet = state.roundContributions.values.maxOrNull() ?: 0
         return activePlayers.all { p ->
             val rc = state.roundContributions[p.id] ?: 0
             val isAllIn = isPlayerAllIn(state, p)
-            state.actedPlayerIds.contains(p.id) && (rc == maxBet || isAllIn)
+            // All-In 玩家：只要投入不超过 maxBet（普通情况），直接视为完成
+            if (isAllIn) return@all true
+            // 普通玩家：必须已行动且投入匹配最高注
+            state.actedPlayerIds.contains(p.id) && rc == maxBet
         }
     }
 
