@@ -601,16 +601,21 @@ private fun JoinRoomScreen(
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.discoveredRooms) { room ->
                     val started = room.gameStarted
+                    val canJoin = !started || room.allowMidGameJoin
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                if (!started) {
+                                if (canJoin) {
                                     onJoinRoom(room, state.savedPlayerName, state.savedBuyIn)
                                 }
                             },
                         colors = CardDefaults.cardColors(
-                            containerColor = if (started) Color(0xFFF5F5F5) else Color(0xFFE8F5E9)
+                            containerColor = when {
+                                !started -> Color(0xFFE8F5E9)
+                                room.allowMidGameJoin -> Color(0xFFE3F2FD)
+                                else -> Color(0xFFF5F5F5)
+                            }
                         )
                     ) {
                         Row(
@@ -622,19 +627,21 @@ private fun JoinRoomScreen(
                         ) {
                             Column {
                                 Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                                    color = if (started) Color.Gray else Color.Unspecified)
+                                    color = if (!canJoin) Color.Gray else Color.Unspecified)
                                 Text(
                                     "房主: ${room.hostName} | ${room.playerCount}人在线",
                                     fontSize = 12.sp, color = Color.Gray
                                 )
-                                if (started) {
+                                if (started && !room.allowMidGameJoin) {
                                     Text("游戏已开始，不可加入", fontSize = 11.sp, color = Color(0xFFE53935))
+                                } else if (started && room.allowMidGameJoin) {
+                                    Text("游戏进行中 · 允许中途加入", fontSize = 11.sp, color = Color(0xFF1565C0))
                                 }
                             }
-                            if (started) {
-                                Text("🔒 已开始", color = Color.Gray, fontSize = 13.sp)
-                            } else {
-                                Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            when {
+                                !started -> Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                room.allowMidGameJoin -> Text("中途加入 →", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                                else -> Text("🔒 已开始", color = Color.Gray, fontSize = 13.sp)
                             }
                         }
                     }

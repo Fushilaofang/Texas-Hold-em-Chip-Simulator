@@ -28,7 +28,8 @@ data class DiscoveredRoom(
     val tcpPort: Int,
     val playerCount: Int,
     val hostName: String,
-    val gameStarted: Boolean = false
+    val gameStarted: Boolean = false,
+    val allowMidGameJoin: Boolean = false
 ) {
     /** 最后收到广播的时间（本机时间戳，不序列化） */
     @kotlinx.serialization.Transient
@@ -44,7 +45,8 @@ private data class RoomBroadcast(
     val tcpPort: Int,
     val playerCount: Int,
     val hostName: String,
-    val gameStarted: Boolean = false
+    val gameStarted: Boolean = false,
+    val allowMidGameJoin: Boolean = false
 )
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -61,7 +63,8 @@ class RoomAdvertiser {
         tcpPort: Int,
         hostName: String,
         playerCountProvider: () -> Int,
-        gameStartedProvider: () -> Boolean = { false }
+        gameStartedProvider: () -> Boolean = { false },
+        allowMidGameJoinProvider: () -> Boolean = { false }
     ) {
         stopBroadcast()
         broadcastJob = scope.launch {
@@ -76,7 +79,8 @@ class RoomAdvertiser {
                         tcpPort = tcpPort,
                         playerCount = playerCountProvider(),
                         hostName = hostName,
-                        gameStarted = gameStartedProvider()
+                        gameStarted = gameStartedProvider(),
+                        allowMidGameJoin = allowMidGameJoinProvider()
                     )
                     val data = json.encodeToString(RoomBroadcast.serializer(), packet).toByteArray()
                     val dgram = DatagramPacket(data, data.size, broadcastAddress, DISCOVERY_PORT)
@@ -137,7 +141,8 @@ class RoomScanner {
                             tcpPort = broadcast.tcpPort,
                             playerCount = broadcast.playerCount,
                             hostName = broadcast.hostName,
-                            gameStarted = broadcast.gameStarted
+                            gameStarted = broadcast.gameStarted,
+                            allowMidGameJoin = broadcast.allowMidGameJoin
                         ).also { it.lastSeen = System.currentTimeMillis() }
                         rooms[key] = room
                     } catch (_: java.net.SocketTimeoutException) {

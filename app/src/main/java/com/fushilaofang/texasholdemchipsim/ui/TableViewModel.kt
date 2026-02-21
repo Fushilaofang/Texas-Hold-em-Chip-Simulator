@@ -1408,7 +1408,8 @@ class TableViewModel(
             tcpPort = 45454,
             hostName = _uiState.value.selfName,
             playerCountProvider = { _uiState.value.players.size },
-            gameStartedProvider = { _uiState.value.gameStarted }
+            gameStartedProvider = { _uiState.value.gameStarted },
+            allowMidGameJoinProvider = { _uiState.value.allowMidGameJoin }
         )
     }
 
