@@ -205,7 +205,8 @@ class MainActivity : ComponentActivity() {
                         onBack = { vm.stopRoomScan(); vm.navigateTo(ScreenState.HOME) },
                         onStartScan = vm::startRoomScan,
                         onStopScan = vm::stopRoomScan,
-                        onJoinRoom = vm::joinRoom
+                        onJoinRoom = vm::joinRoom,
+                        onEnterMidGameLobby = vm::enterMidGameLobby
                     )
                     ScreenState.LOBBY -> LobbyScreen(
                         state = state,
@@ -220,7 +221,8 @@ class MainActivity : ComponentActivity() {
                         onToggleAllowMidGameJoin = vm::toggleAllowMidGameJoin,
                         onApproveMidGameJoin = vm::approveMidGameJoin,
                         onRejectMidGameJoin = vm::rejectMidGameJoin,
-                        onCancelMidGameJoin = vm::cancelMidGameJoin
+                        onCancelMidGameJoin = vm::cancelMidGameJoin,
+                        onStartMidGameJoin = vm::startMidGameJoin
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -559,7 +561,8 @@ private fun JoinRoomScreen(
     onBack: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
-    onJoinRoom: (DiscoveredRoom, String, Int) -> Unit
+    onJoinRoom: (DiscoveredRoom, String, Int) -> Unit,
+    onEnterMidGameLobby: (DiscoveredRoom) -> Unit = {}
 ) {
     Column(
         modifier = Modifier
@@ -609,7 +612,11 @@ private fun JoinRoomScreen(
                             .fillMaxWidth()
                             .clickable {
                                 if (canJoin) {
-                                    onJoinRoom(room, state.savedPlayerName, state.savedBuyIn)
+                                    if (room.gameStarted && room.allowMidGameJoin) {
+                                        onEnterMidGameLobby(room)
+                                    } else {
+                                        onJoinRoom(room, state.savedPlayerName, state.savedBuyIn)
+                                    }
                                 }
                             },
                         colors = CardDefaults.cardColors(
@@ -676,7 +683,8 @@ private fun LobbyScreen(
     onToggleAllowMidGameJoin: (Boolean) -> Unit = {},
     onApproveMidGameJoin: (String) -> Unit = {},
     onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> },
-    onCancelMidGameJoin: () -> Unit = {}
+    onCancelMidGameJoin: () -> Unit = {},
+    onStartMidGameJoin: () -> Unit = {}
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
@@ -914,6 +922,8 @@ private fun LobbyScreen(
             // 判断自己是否是中途加入者（游戏已开始且自己不在正式玩家行动列表中，或等待中）
             val isMidGameJoiner = state.gameStarted && !isSelfWaiting &&
                     state.selfId.isNotBlank() && sortedPlayers.none { it.id == state.selfId }
+            // 未连接时进入预览大厅（pendingMidGameRoom != null）
+            val isPendingEntry = state.pendingMidGameRoom != null && state.selfId.isBlank()
             when {
                 isSelfWaiting -> {
                     // 已获批，等待下一手
@@ -952,6 +962,23 @@ private fun LobbyScreen(
                         Text("您已被屏蔽，无法再次申请加入该房间", color = Color(0xFFE53935), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         Spacer(Modifier.height(8.dp))
                         OutlinedButton(onClick = onLeave, modifier = Modifier.fillMaxWidth().height(56.dp)) { Text("返回主界面", fontSize = 18.sp) }
+                    }
+                }
+                isPendingEntry -> {
+                    // 未连接状态：显示中途加入按鈕
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "游戏进行中，共 ${state.pendingMidGameRoom!!.playerCount} 人在线",
+                            fontSize = 13.sp, color = Color.Gray
+                        )
+                        Button(
+                            onClick = onStartMidGameJoin,
+                            modifier = Modifier.fillMaxWidth().height(56.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                        ) { Text("中途加入", fontSize = 18.sp) }
+                        OutlinedButton(onClick = onLeave, modifier = Modifier.fillMaxWidth()) {
+                            Text("返回")
+                        }
                     }
                 }
                 isMidGameJoiner -> {

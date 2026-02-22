@@ -112,7 +112,9 @@ data class TableUiState(
     val allowMidGameJoin: Boolean = false,
     val pendingMidJoins: List<PendingMidJoinInfo> = emptyList(),
     val midGameJoinStatus: MidGameJoinStatus = MidGameJoinStatus.NONE,
-    val midGameWaitingPlayerIds: Set<String> = emptySet()
+    val midGameWaitingPlayerIds: Set<String> = emptySet(),
+    /** 点击中途加入房间后暂存的房间信息，未连接时全局显示大厅 */
+    val pendingMidGameRoom: DiscoveredRoom? = null
 )
 
 class TableViewModel(
@@ -350,6 +352,55 @@ class TableViewModel(
 
         startServer()
         startAdvertiser()
+    }
+
+    /**
+     * 点击中途加入房间后先进入大厅（不连接）
+     */
+    fun enterMidGameLobby(room: DiscoveredRoom) {
+        stopRoomScan()
+        _uiState.update {
+            it.copy(
+                mode = TableMode.CLIENT,
+                screen = ScreenState.LOBBY,
+                tableName = room.roomName,
+                gameStarted = true,
+                players = emptyList(),
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                canRejoin = false,
+                pendingMidGameRoom = room,
+                info = "游戏进行中，共 ${room.playerCount} 人 | 点击中途加入申请"
+            )
+        }
+    }
+
+    /**
+     * 在大厅点击“中途加入”按鈕后才实际连接服务器
+     */
+    fun startMidGameJoin() {
+        val state = _uiState.value
+        val room = state.pendingMidGameRoom ?: return
+        clearSession()
+        _uiState.update {
+            it.copy(
+                mode = TableMode.CLIENT,
+                screen = ScreenState.LOBBY,
+                tableName = room.roomName,
+                hostIp = room.hostIp,
+                selfName = it.savedPlayerName,
+                gameStarted = false,
+                players = emptyList(),
+                logs = emptyList(),
+                isScanning = false,
+                discoveredRooms = emptyList(),
+                canRejoin = false,
+                pendingMidGameRoom = null,
+                info = "正在加入「${room.roomName}」..."
+            )
+        }
+        client.connect(room.hostIp, state.savedPlayerName.ifBlank { "玩家" }, state.savedBuyIn, deviceId, state.savedAvatarBase64, ::handleClientEvent)
+        acquireWakeLock()
     }
 
     /**
