@@ -296,6 +296,8 @@ class LanTableServer(
         heartbeatJob?.cancel()
         heartbeatJob = null
         synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        // 新建房间时重置屏蔽列表，被屏蔽的玩家可以加入新房间
+        synchronized(blockedLock) { blockedDeviceIds.clear() }
         // 拒绝所有正在等待审批的中途加入申请
         val snapshot = synchronized(pendingMidJoinsLock) { pendingMidJoins.toMap().also { pendingMidJoins.clear() } }
         snapshot.values.forEach { p ->
@@ -311,6 +313,11 @@ class LanTableServer(
         }
         runCatching { serverSocket?.close() }
         serverSocket = null
+    }
+
+    /** 显式清空屏蔽列表（每次新建房间时自动调用，也可供外部手动调用） */
+    fun clearBlockList() {
+        synchronized(blockedLock) { blockedDeviceIds.clear() }
     }
 
     fun close() {

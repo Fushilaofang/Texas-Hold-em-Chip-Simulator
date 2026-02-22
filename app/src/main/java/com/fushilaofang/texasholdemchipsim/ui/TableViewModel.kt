@@ -114,7 +114,9 @@ data class TableUiState(
     val midGameJoinStatus: MidGameJoinStatus = MidGameJoinStatus.NONE,
     val midGameWaitingPlayerIds: Set<String> = emptySet(),
     /** 点击中途加入房间后暂存的房间信息，未连接时全局显示大厅 */
-    val pendingMidGameRoom: DiscoveredRoom? = null
+    val pendingMidGameRoom: DiscoveredRoom? = null,
+    /** 当前房间的唯一ID（每次 hostTable 时生成），用于区分同一主机的不同房间 */
+    val roomId: String = ""
 )
 
 class TableViewModel(
@@ -315,6 +317,7 @@ class TableViewModel(
     fun hostTable(roomName: String, hostName: String, buyIn: Int, blindsConfig: BlindsConfig = BlindsConfig()) {
         clearSession()
         val hostId = UUID.randomUUID().toString()
+        val newRoomId = UUID.randomUUID().toString()  // 每次创建房间生成唯一 roomId
         val hostPlayer = PlayerState(
             id = hostId,
             name = hostName.ifBlank { "庄家" },
@@ -346,6 +349,7 @@ class TableViewModel(
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 canRejoin = false,
+                roomId = newRoomId,
                 info = "已创建房间「${roomName.ifBlank { "家庭牌局" }}」| 等待玩家加入并准备"
             )
         }
@@ -1490,6 +1494,7 @@ class TableViewModel(
             roomName = _uiState.value.tableName,
             tcpPort = 45454,
             hostName = _uiState.value.selfName,
+            roomId = _uiState.value.roomId,
             playerCountProvider = { _uiState.value.players.size },
             gameStartedProvider = { _uiState.value.gameStarted },
             allowMidGameJoinProvider = { _uiState.value.allowMidGameJoin }
@@ -1827,6 +1832,7 @@ class TableViewModel(
                     if (!gameStarted) nameUpdated.copy(chips = currentBuyIn) else nameUpdated
                 } else p
             }
+            val rejoinRoomId = UUID.randomUUID().toString()  // 重启后生成新 roomId，屏蔽列表已在 stop() 中清空
             // 房主重新加入：恢复状态 + 重启服务端 + 重启广播
             _uiState.update {
                 it.copy(
@@ -1855,6 +1861,7 @@ class TableViewModel(
                         sessionJson.decodeFromString<List<ChipTransaction>>(s)
                     } catch (_: Exception) { emptyList() },
                     canRejoin = false,
+                    roomId = rejoinRoomId,
                     // 标记所有非房主玩家为掉线
                     disconnectedPlayerIds = players.filter { p -> p.id != selfId }.map { p -> p.id }.toSet(),
                     info = "正在恢复牌局..."

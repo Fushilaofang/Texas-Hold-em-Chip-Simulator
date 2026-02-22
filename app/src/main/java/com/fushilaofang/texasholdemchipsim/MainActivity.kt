@@ -41,6 +41,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -812,10 +813,10 @@ private fun LobbyScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         // 多条申请时显示切换标签
                         if (state.pendingMidJoins.size > 1) {
-                            androidx.compose.foundation.lazy.LazyRow(
+                            LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                androidx.compose.foundation.lazy.items(state.pendingMidJoins) { item ->
+                                items(state.pendingMidJoins, key = { it.requestId }) { item ->
                                     val isSelected = item.requestId == info.requestId
                                     OutlinedButton(
                                         onClick = { selectedInfo = item },
@@ -1541,10 +1542,10 @@ private fun GameScreen(
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (state.pendingMidJoins.size > 1) {
-                            androidx.compose.foundation.lazy.LazyRow(
+                            LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                androidx.compose.foundation.lazy.items(state.pendingMidJoins) { item ->
+                                items(state.pendingMidJoins, key = { it.requestId }) { item ->
                                     val isSelected = item.requestId == info.requestId
                                     OutlinedButton(
                                         onClick = { selectedInfoGame = item },

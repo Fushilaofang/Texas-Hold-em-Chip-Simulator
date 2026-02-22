@@ -30,7 +30,9 @@ data class DiscoveredRoom(
     val hostName: String,
     val gameStarted: Boolean = false,
     val allowMidGameJoin: Boolean = false,
-    val maxPlayers: Int = 10
+    val maxPlayers: Int = 10,
+    /** 每次创建房间时生成的唯一ID，用于区分同一主机的不同房间（避免屏蔽记录误伤） */
+    val roomId: String = ""
 ) {
     /** 最后收到广播的时间（本机时间戳，不序列化） */
     @kotlinx.serialization.Transient
@@ -48,7 +50,9 @@ private data class RoomBroadcast(
     val hostName: String,
     val gameStarted: Boolean = false,
     val allowMidGameJoin: Boolean = false,
-    val maxPlayers: Int = 10
+    val maxPlayers: Int = 10,
+    /** 每次创建房间时生成的唯一ID */
+    val roomId: String = ""
 )
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -64,6 +68,7 @@ class RoomAdvertiser {
         roomName: String,
         tcpPort: Int,
         hostName: String,
+        roomId: String,
         playerCountProvider: () -> Int,
         gameStartedProvider: () -> Boolean = { false },
         allowMidGameJoinProvider: () -> Boolean = { false },
@@ -84,7 +89,8 @@ class RoomAdvertiser {
                         hostName = hostName,
                         gameStarted = gameStartedProvider(),
                         allowMidGameJoin = allowMidGameJoinProvider(),
-                        maxPlayers = maxPlayersProvider()
+                        maxPlayers = maxPlayersProvider(),
+                        roomId = roomId
                     )
                     val data = json.encodeToString(RoomBroadcast.serializer(), packet).toByteArray()
                     val dgram = DatagramPacket(data, data.size, broadcastAddress, DISCOVERY_PORT)
@@ -138,7 +144,8 @@ class RoomScanner {
                         val broadcast = json.decodeFromString(RoomBroadcast.serializer(), text)
                         val hostIp = dgram.address.hostAddress ?: continue
 
-                        val key = "$hostIp:${broadcast.roomName}"
+                        // 以 hostIp:roomId 为 key，区分同一主机的不同房间；roomId 为空则回退到房间名
+                        val key = if (broadcast.roomId.isNotBlank()) "$hostIp:${broadcast.roomId}" else "$hostIp:${broadcast.roomName}"
                         val room = DiscoveredRoom(
                             roomName = broadcast.roomName,
                             hostIp = hostIp,
@@ -147,7 +154,8 @@ class RoomScanner {
                             hostName = broadcast.hostName,
                             gameStarted = broadcast.gameStarted,
                             allowMidGameJoin = broadcast.allowMidGameJoin,
-                            maxPlayers = broadcast.maxPlayers
+                            maxPlayers = broadcast.maxPlayers,
+                            roomId = broadcast.roomId
                         ).also { it.lastSeen = System.currentTimeMillis() }
                         rooms[key] = room
                     } catch (_: java.net.SocketTimeoutException) {
