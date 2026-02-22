@@ -1708,6 +1708,8 @@ class TableViewModel(
                     midGameJoinStatus = MidGameJoinStatus.PENDING,
                     info = "申请已提交，等待房主审批..."
                 ) }
+                // 向服务端请求当前房间玩家列表，以便在大厅中展示所有玩家信息
+                client.sendRequestRoomState()
             }
             is LanTableClient.Event.MidGameJoinRejected -> {
                 _uiState.update { it.copy(

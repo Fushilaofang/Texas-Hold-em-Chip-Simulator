@@ -405,6 +405,33 @@ class LanTableServer(
                             return@launch
                         }
 
+                        is NetworkMessage.RequestRoomState -> {
+                            // 已连接（中途加入等待审批中）的玩家主动请求当前房间状态
+                            val roomStateSync = NetworkMessage.StateSync(
+                                players = hostPlayersProvider(),
+                                handCounter = handCounterProvider(),
+                                transactions = txProvider().takeLast(50),
+                                contributions = contributionsProvider(),
+                                blindsState = blindsStateProvider(),
+                                blindsEnabled = blindsEnabledProvider(),
+                                sidePotEnabled = sidePotEnabledProvider(),
+                                selectedWinnerIds = selectedWinnerIdsProvider(),
+                                foldedPlayerIds = foldedPlayerIdsProvider(),
+                                gameStarted = gameStartedProvider(),
+                                currentRound = currentRoundProvider(),
+                                currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                roundContributions = roundContributionsProvider(),
+                                actedPlayerIds = actedPlayerIdsProvider(),
+                                midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                allowMidGameJoin = allowMidGameJoinProvider()
+                            )
+                            try {
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), roomStateSync))
+                                writer.newLine()
+                                writer.flush()
+                            } catch (_: Exception) {}
+                        }
+
                         is NetworkMessage.MidGameJoinCancel -> {
                             // 客户端主动取消中途加入
                             // 1. 查找是否在 pending 审批队列中（通过 socket 匹配）
@@ -611,27 +638,7 @@ class LanTableServer(
                                 pendingApproval = approval
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), NetworkMessage.MidGameJoinPending))
                                 writer.newLine(); writer.flush()
-                                // 立即发送 StateSync 让中途加入者看到玩家列表
-                                val preSync = NetworkMessage.StateSync(
-                                    players = hostPlayersProvider(),
-                                    handCounter = handCounterProvider(),
-                                    transactions = txProvider().takeLast(50),
-                                    contributions = contributionsProvider(),
-                                    blindsState = blindsStateProvider(),
-                                    blindsEnabled = blindsEnabledProvider(),
-                                    sidePotEnabled = sidePotEnabledProvider(),
-                                    selectedWinnerIds = selectedWinnerIdsProvider(),
-                                    foldedPlayerIds = foldedPlayerIdsProvider(),
-                                    gameStarted = gameStartedProvider(),
-                                    currentRound = currentRoundProvider(),
-                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
-                                    roundContributions = roundContributionsProvider(),
-                                    actedPlayerIds = actedPlayerIdsProvider(),
-                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
-                                    allowMidGameJoin = allowMidGameJoinProvider()
-                                )
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), preSync))
-                                writer.newLine(); writer.flush()
+                                // 不再主动推送 StateSync，等待客户端发送 RequestRoomState 后再响应玩家列表
                                 onEvent(Event.MidGameJoinRequested(requestId, msg.playerName, msg.buyIn, msg.deviceId, msg.avatarBase64))
 
                                 // 启动独立协程监听审批结果，不阻塞 while 消息循环
@@ -1107,6 +1114,22 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.MidGameJoinCancel
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * 已连接且处于中途加入等待状态的客户端主动向服务端请求当前房间玩家列表。
+     * 服务端收到后响应一次 StateSync，客户端据此更新大厅中的玩家列表展示。
+     */
+    fun sendRequestRoomState() {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.RequestRoomState
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()
