@@ -360,6 +360,37 @@ class LanTableServer(
         synchronized(blockedLock) { blockedDeviceIds.clear() }
     }
 
+    /**
+     * 房主移除已连接的玩家。
+     * 先向客户端发送 [NetworkMessage.KickedFromRoom] 通知，稍后再关闭连接。
+     * @param playerId 要移除的玩家 ID
+     * @param deviceId 玩家设备 ID（用于屏蔽时写入黑名单）
+     * @param block 是否同时屏蔽该设备
+     */
+    fun kickPlayer(playerId: String, deviceId: String, block: Boolean) {
+        if (block && deviceId.isNotBlank()) {
+            synchronized(blockedLock) { blockedDeviceIds.add(deviceId) }
+        }
+        val conn = synchronized(clientsLock) { clients[playerId] } ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val reason = if (block) "您已被房主移除并屏蔽" else "您已被房主移除"
+                val msg = json.encodeToString(
+                    NetworkMessage.serializer(),
+                    NetworkMessage.KickedFromRoom(reason = reason, blocked = block)
+                )
+                conn.writer.write(msg)
+                conn.writer.newLine()
+                conn.writer.flush()
+            } catch (_: Exception) {}
+            // 给客户端足够时间读取消息后再断开
+            kotlinx.coroutines.delay(400)
+            synchronized(clientsLock) { clients.remove(playerId) }
+            conn.readerJob.cancel()
+            runCatching { conn.socket.close() }
+        }
+    }
+
     fun close() {
         stop()
         scope.cancel()
@@ -894,6 +925,8 @@ class LanTableClient(
         data object MidGameJoinPending : Event()
         /** 房主拒绝或屏蔽了中途加入申请 */
         data class MidGameJoinRejected(val reason: String, val blocked: Boolean) : Event()
+        /** 房主将本玩家移除（可能同时屏蔽） */
+        data class Kicked(val reason: String, val blocked: Boolean) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -1027,6 +1060,11 @@ class LanTableClient(
                         is NetworkMessage.Error -> onEvent(Event.Error(msg.reason))
                         is NetworkMessage.MidGameJoinPending -> onEvent(Event.MidGameJoinPending)
                         is NetworkMessage.MidGameJoinRejected -> onEvent(Event.MidGameJoinRejected(msg.reason, msg.blocked))
+                        is NetworkMessage.KickedFromRoom -> {
+                            // 被移除：阻止重连，通知 ViewModel，等待服务端关闭连接
+                            shouldReconnect = false
+                            onEvent(Event.Kicked(msg.reason, msg.blocked))
+                        }
                         else -> Unit
                     }
                 }

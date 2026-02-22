@@ -224,7 +224,8 @@ class MainActivity : ComponentActivity() {
                         onApproveMidGameJoin = vm::approveMidGameJoin,
                         onRejectMidGameJoin = vm::rejectMidGameJoin,
                         onCancelMidGameJoin = vm::cancelMidGameJoin,
-                        onStartMidGameJoin = vm::startMidGameJoin
+                        onStartMidGameJoin = vm::startMidGameJoin,
+                        onKickPlayer = vm::kickPlayer
                     )
                     ScreenState.GAME -> GameScreen(
                         state = state,
@@ -243,7 +244,8 @@ class MainActivity : ComponentActivity() {
                         onPickAvatar = launchAvatarPickerInDialog,
                         onLeave = vm::goHome,
                         onApproveMidGameJoin = vm::approveMidGameJoin,
-                        onRejectMidGameJoin = vm::rejectMidGameJoin
+                        onRejectMidGameJoin = vm::rejectMidGameJoin,
+                        onKickPlayer = vm::kickPlayer
                     )
                 }
 
@@ -266,6 +268,18 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 Text("退出房间")
                             }
+                        }
+                    )
+                }
+
+                // 被房主移除弹窗（叠加在任意界面顶层，必须手动确认）
+                if (state.wasKicked) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { /* 必须点按确认按钮 */ },
+                        title = { Text("已被移除", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
+                        text = { Text(state.kickReason.ifBlank { "你已被房主移除出房间。" }) },
+                        confirmButton = {
+                            Button(onClick = { vm.clearKickedState() }) { Text("确定") }
                         }
                     )
                 }
@@ -716,11 +730,14 @@ private fun LobbyScreen(
     onApproveMidGameJoin: (String) -> Unit = {},
     onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> },
     onCancelMidGameJoin: () -> Unit = {},
-    onStartMidGameJoin: () -> Unit = {}
+    onStartMidGameJoin: () -> Unit = {},
+    onKickPlayer: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     val sortedPlayers = state.players.sortedBy { it.seatOrder }
     val allReady = sortedPlayers.isNotEmpty() && sortedPlayers.all { it.isReady }
     val readyCount = sortedPlayers.count { it.isReady }
+    var kickConfirmPlayer by remember { mutableStateOf<PlayerState?>(null) }
+    var kickBlockDevice by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -896,6 +913,36 @@ private fun LobbyScreen(
             )
         }
 
+        // 移除玩家二级确认弹窗
+        kickConfirmPlayer?.let { target ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { kickConfirmPlayer = null; kickBlockDevice = false },
+                title = { Text("移除玩家", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("确定要将「${target.name}」移出房间吗？")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("同时屏蔽此设备（禁止再次加入）", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Switch(checked = kickBlockDevice, onCheckedChange = { kickBlockDevice = it })
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = { onKickPlayer(target.id, kickBlockDevice); kickConfirmPlayer = null; kickBlockDevice = false },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                    ) { Text("确认移除") }
+                },
+                dismissButton = {
+                    OutlinedButton(onClick = { kickConfirmPlayer = null; kickBlockDevice = false }) { Text("取消") }
+                }
+            )
+        }
+
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("玩家列表", fontWeight = FontWeight.Bold)
@@ -972,6 +1019,16 @@ private fun LobbyScreen(
                             }
                         }
 
+                        // 房主可移除非房主玩家
+                        if (state.mode == TableMode.HOST && !player.isHost) {
+                            Spacer(Modifier.width(4.dp))
+                            OutlinedButton(
+                                onClick = { kickConfirmPlayer = player; kickBlockDevice = false },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                modifier = Modifier.height(32.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
+                            ) { Text("移除", fontSize = 11.sp) }
+                        }
                         // 右侧状态标识：房主 / 游戏中 / 已准备 / 未准备，风格统一
                         Spacer(Modifier.width(8.dp))
                         val rightBadgeWidth = 52.dp
@@ -1128,7 +1185,8 @@ private fun GameScreen(
     pendingAvatarBase64: String = "",
     onClearPendingAvatar: () -> Unit = {},
     onApproveMidGameJoin: (String) -> Unit = {},
-    onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> }
+    onRejectMidGameJoin: (String, Boolean) -> Unit = { _, _ -> },
+    onKickPlayer: (String, Boolean) -> Unit = { _, _ -> }
 ) {
     var showLogs by remember { mutableStateOf(false) }
     if (showLogs) {
@@ -1142,6 +1200,9 @@ private fun GameScreen(
     var showReorderPanel by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showDealerPanel by remember { mutableStateOf(false) }
+    var showKickPanel by remember { mutableStateOf(false) }
+    var kickConfirmTargetG by remember { mutableStateOf<PlayerState?>(null) }
+    var kickBlockDeviceG by remember { mutableStateOf(false) }
     val sortedPlayers = state.players
         .filter { !state.midGameWaitingPlayerIds.contains(it.id) }
         .sortedBy { it.seatOrder }
@@ -1224,6 +1285,72 @@ private fun GameScreen(
                     showEditProfileDialog = false
                     onClearPendingAvatar()
                 }) { Text("取消") }
+            }
+        )
+    }
+
+    // 移除玩家选择面板
+    if (showKickPanel && state.mode == TableMode.HOST) {
+        val kickablePlayers = state.players.sortedBy { it.seatOrder }.filter { !it.isHost }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showKickPanel = false },
+            title = { Text("移除玩家", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("选择要移除的玩家", fontSize = 12.sp, color = Color.Gray)
+                    if (kickablePlayers.isEmpty()) {
+                        Text("没有可移除的玩家", fontSize = 13.sp, color = Color.Gray)
+                    } else {
+                        kickablePlayers.forEach { player ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(player.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                                OutlinedButton(
+                                    onClick = { showKickPanel = false; kickConfirmTargetG = player; kickBlockDeviceG = false },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(32.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
+                                ) { Text("移除", fontSize = 12.sp) }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showKickPanel = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    // 移除玩家二级确认弹窗
+    kickConfirmTargetG?.let { target ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { kickConfirmTargetG = null; kickBlockDeviceG = false },
+            title = { Text("确认移除", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("确定要将「${target.name}」移出房间吗？")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("同时屏蔽此设备（禁止再次加入）", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                        Switch(checked = kickBlockDeviceG, onCheckedChange = { kickBlockDeviceG = it })
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onKickPlayer(target.id, kickBlockDeviceG); kickConfirmTargetG = null; kickBlockDeviceG = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))
+                ) { Text("确认移除") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { kickConfirmTargetG = null; kickBlockDeviceG = false }) { Text("取消") }
             }
         )
     }
@@ -1530,6 +1657,10 @@ private fun GameScreen(
                             },
                             enabled = isBetweenHands,
                             onClick = { showMenu = false; showDealerPanel = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("移除玩家", color = Color(0xFFE53935)) },
+                            onClick = { showMenu = false; showKickPanel = true }
                         )
                         HorizontalDivider()
                     }

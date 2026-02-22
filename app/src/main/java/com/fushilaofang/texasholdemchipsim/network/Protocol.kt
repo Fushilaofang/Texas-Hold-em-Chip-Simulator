@@ -167,4 +167,12 @@ sealed class NetworkMessage {
         val reason: String = "",
         val blocked: Boolean = false
     ) : NetworkMessage()
+
+    /** 服务端 → 已连接客户端：房主将该玩家移除（可选同时屏蔽） */
+    @Serializable
+    @SerialName("kicked_from_room")
+    data class KickedFromRoom(
+        val reason: String = "",
+        val blocked: Boolean = false
+    ) : NetworkMessage()
 }

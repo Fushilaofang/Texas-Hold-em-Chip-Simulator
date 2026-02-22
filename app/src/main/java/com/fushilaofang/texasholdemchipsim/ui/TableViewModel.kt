@@ -116,7 +116,11 @@ data class TableUiState(
     /** 点击中途加入房间后暂存的房间信息，未连接时全局显示大厅 */
     val pendingMidGameRoom: DiscoveredRoom? = null,
     /** 当前房间的唯一ID（每次 hostTable 时生成），用于区分同一主机的不同房间 */
-    val roomId: String = ""
+    val roomId: String = "",
+    // --- 被房主移除 ---
+    /** 是否被房主移除（展示被移除弹窗） */
+    val wasKicked: Boolean = false,
+    val kickReason: String = ""
 )
 
 class TableViewModel(
@@ -552,6 +556,34 @@ class TableViewModel(
             )
         }
         server.rejectMidGameJoin(requestId, block)
+    }
+
+    /**
+     * 房主移除已连接的玩家（大厅或游戏中均可调用）。
+     * @param playerId 要移除的玩家 ID
+     * @param block 是否同时屏蔽该设备
+     */
+    fun kickPlayer(playerId: String, block: Boolean) {
+        val state = _uiState.value
+        if (state.mode != TableMode.HOST) return
+        val player = state.players.firstOrNull { it.id == playerId } ?: return
+        _uiState.update { s ->
+            s.copy(
+                players = s.players.filter { it.id != playerId },
+                midGameWaitingPlayerIds = s.midGameWaitingPlayerIds - playerId,
+                foldedPlayerIds = s.foldedPlayerIds - playerId,
+                disconnectedPlayerIds = s.disconnectedPlayerIds - playerId,
+                info = "${player.name} 已被移除${if (block) "并屏蔽" else ""}"
+            )
+        }
+        server.kickPlayer(playerId, player.deviceId, block)
+        syncToClients()
+        saveSession()
+    }
+
+    /** 客户端确认关闭被移除弹窗 */
+    fun clearKickedState() {
+        _uiState.update { it.copy(wasKicked = false, kickReason = "") }
     }
 
     /** 客户端主动取消中途加入申请（等待审批或已批准等待下一手） */
@@ -1734,6 +1766,13 @@ class TableViewModel(
                     midGameJoinStatus = if (event.blocked) MidGameJoinStatus.BLOCKED else MidGameJoinStatus.REJECTED,
                     info = event.reason
                 ) }
+            }
+            is LanTableClient.Event.Kicked -> {
+                // 清空 selfId 确保 goHome() 计算 canRejoin = false
+                _uiState.update { it.copy(selfId = "") }
+                goHome()
+                // goHome 不会重置 wasKicked，在其后写入展示弹窗
+                _uiState.update { it.copy(wasKicked = true, kickReason = event.reason) }
             }
         }
     }
