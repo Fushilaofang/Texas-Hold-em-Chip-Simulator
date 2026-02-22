@@ -351,8 +351,12 @@ class LanTableServer(
         // 启用 TCP keepalive，让 OS 维护连接状态
         runCatching { socket.keepAlive = true }
         var assignedId: String? = null
+        var pendingRequestId: String? = null     // 该 socket 对应的中途加入审批请求 ID
+        var pendingApproval: CompletableDeferred<String?>? = null
+        var approvalWatchJob: Job? = null
 
         val readerJob = scope.launch {
+            val outerJob = this.coroutineContext[Job]!!
             try {
                 while (isActive) {
                     val line = reader.readLine() ?: break
@@ -587,7 +591,7 @@ class LanTableServer(
                                     writer.newLine(); writer.flush()
                                     socket.close(); return@launch
                                 }
-                                // 发送“等待房主审批”通知
+                                // 发送"等待房主审批"通知
                                 val requestId = UUID.randomUUID().toString()
                                 val approval = CompletableDeferred<String?>()
                                 val pending = PendingMidJoin(
@@ -601,6 +605,8 @@ class LanTableServer(
                                     approval = approval
                                 )
                                 synchronized(pendingMidJoinsLock) { pendingMidJoins[requestId] = pending }
+                                pendingRequestId = requestId
+                                pendingApproval = approval
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), NetworkMessage.MidGameJoinPending))
                                 writer.newLine(); writer.flush()
                                 // 立即发送 StateSync 让中途加入者看到玩家列表
@@ -626,57 +632,62 @@ class LanTableServer(
                                 writer.newLine(); writer.flush()
                                 onEvent(Event.MidGameJoinRequested(requestId, msg.playerName, msg.buyIn, msg.deviceId, msg.avatarBase64))
 
-                                // 挂起等待房主审批（最多等 5 分钟）
-                                val approvedId = withTimeoutOrNull(300_000L) { approval.await() }
-                                synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(requestId) }
+                                // 启动独立协程监听审批结果，不阻塞 while 消息循环
+                                approvalWatchJob = scope.launch {
+                                    val approvedId = withTimeoutOrNull(300_000L) { approval.await() }
+                                    synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(requestId) }
+                                    pendingRequestId = null
+                                    pendingApproval = null
 
-                                if (approvedId == null) {
-                                    // 房主拒绝/超时：rejectMidGameJoin 已处理通知客户端
-                                    runCatching { socket.close() }
-                                    return@launch
-                                }
-
-                                // 房主已同意 — 此时 ViewModel 已将玩家加入 state
-                                assignedId = approvedId
-                                synchronized(clientsLock) {
-                                    clients.remove(approvedId)?.let { old ->
-                                        old.readerJob.cancel()
-                                        runCatching { old.socket.close() }
+                                    if (approvedId == null) {
+                                        // 房主拒绝/超时/客户端取消
+                                        runCatching { socket.close() }
+                                        return@launch
                                     }
-                                    clients[approvedId] = ClientConnection(
-                                        playerId = approvedId,
-                                        socket = socket,
-                                        writer = writer,
-                                        readerJob = this.coroutineContext[Job]
-                                            ?: error("missing coroutine job")
-                                    )
+
+                                    // 房主已同意
+                                    assignedId = approvedId
+                                    synchronized(clientsLock) {
+                                        clients.remove(approvedId)?.let { old ->
+                                            old.readerJob.cancel()
+                                            runCatching { old.socket.close() }
+                                        }
+                                        clients[approvedId] = ClientConnection(
+                                            playerId = approvedId,
+                                            socket = socket,
+                                            writer = writer,
+                                            readerJob = outerJob
+                                        )
+                                    }
+                                    // 发送 JoinAccepted
+                                    try {
+                                        val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = approvedId)
+                                        writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
+                                        writer.newLine(); writer.flush()
+                                        val sync = NetworkMessage.StateSync(
+                                            players = hostPlayersProvider(),
+                                            handCounter = handCounterProvider(),
+                                            transactions = txProvider().takeLast(50),
+                                            contributions = contributionsProvider(),
+                                            blindsState = blindsStateProvider(),
+                                            blindsEnabled = blindsEnabledProvider(),
+                                            sidePotEnabled = sidePotEnabledProvider(),
+                                            selectedWinnerIds = selectedWinnerIdsProvider(),
+                                            foldedPlayerIds = foldedPlayerIdsProvider(),
+                                            gameStarted = gameStartedProvider(),
+                                            currentRound = currentRoundProvider(),
+                                            currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                            roundContributions = roundContributionsProvider(),
+                                            actedPlayerIds = actedPlayerIdsProvider(),
+                                            midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                            allowMidGameJoin = allowMidGameJoinProvider()
+                                        )
+                                        writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
+                                        writer.newLine(); writer.flush()
+                                    } catch (_: Exception) {
+                                        runCatching { socket.close() }
+                                    }
                                 }
-                                // 发送 JoinAccepted
-                                val accepted = NetworkMessage.JoinAccepted(assignedPlayerId = approvedId)
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), accepted))
-                                writer.newLine(); writer.flush()
-                                // 发送当前完整状态（包含新玩家自己 + midGameWaitingPlayerIds）
-                                val sync = NetworkMessage.StateSync(
-                                    players = hostPlayersProvider(),
-                                    handCounter = handCounterProvider(),
-                                    transactions = txProvider().takeLast(50),
-                                    contributions = contributionsProvider(),
-                                    blindsState = blindsStateProvider(),
-                                    blindsEnabled = blindsEnabledProvider(),
-                                    sidePotEnabled = sidePotEnabledProvider(),
-                                    selectedWinnerIds = selectedWinnerIdsProvider(),
-                                    foldedPlayerIds = foldedPlayerIdsProvider(),
-                                    gameStarted = gameStartedProvider(),
-                                    currentRound = currentRoundProvider(),
-                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
-                                    roundContributions = roundContributionsProvider(),
-                                    actedPlayerIds = actedPlayerIdsProvider(),
-                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
-                                    allowMidGameJoin = allowMidGameJoinProvider()
-                                )
-                                writer.write(json.encodeToString(NetworkMessage.serializer(), sync))
-                                writer.newLine(); writer.flush()
-                                // 后续不返回，继续监听该客户端的消息
                             } else {
                                 // 全新玩家正常加入（游戏未开始）
                                 // 检查是否已满人（10人上限）
@@ -731,8 +742,7 @@ class LanTableServer(
                                         playerId = playerId,
                                         socket = socket,
                                         writer = writer,
-                                        readerJob = this.coroutineContext[Job]
-                                            ?: error("missing coroutine job")
+                                        readerJob = outerJob
                                     )
                                 }
 
@@ -746,6 +756,14 @@ class LanTableServer(
             } catch (ex: Exception) {
                 onEvent(Event.Error("客户端处理失败: ${ex.message ?: "未知错误"}"))
             } finally {
+                approvalWatchJob?.cancel()
+                // 自动清理未决的中途加入申请（客户端断开连接时）
+                val pReqId = pendingRequestId
+                if (pReqId != null) {
+                    val removedEntry = synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(pReqId) }
+                    removedEntry?.approval?.complete(null)
+                    onEvent(Event.MidGameJoinCancelled(pReqId, null))
+                }
                 val id = assignedId
                 if (id != null) {
                     synchronized(clientsLock) { clients.remove(id) }
