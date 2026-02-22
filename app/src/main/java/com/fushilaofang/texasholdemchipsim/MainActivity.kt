@@ -976,9 +976,6 @@ private fun LobbyScreen(
                             modifier = Modifier.fillMaxWidth().height(56.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
                         ) { Text("中途加入", fontSize = 18.sp) }
-                        OutlinedButton(onClick = onLeave, modifier = Modifier.fillMaxWidth()) {
-                            Text("返回")
-                        }
                     }
                 }
                 isMidGameJoiner -> {
