@@ -134,6 +134,14 @@ sealed class NetworkMessage {
         val avatarBase64: String = ""
     ) : NetworkMessage()
 
+    /**
+     * 客户端 → 服务端：仅请求当前房间状态快照（不申请加入），
+     * 用于中途加入预览大厅展示当前玩家列表。服务端回复一次 StateSync 后关闭连接。
+     */
+    @Serializable
+    @SerialName("state_preview_request")
+    data object StatePreviewRequest : NetworkMessage()
+
     /** 客户端 → 服务端：取消中途加入申请（等待审批或已批准等待下一手期间均可调用） */
     @Serializable
     @SerialName("mid_game_join_cancel")

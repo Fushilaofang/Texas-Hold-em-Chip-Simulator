@@ -363,6 +363,35 @@ class LanTableServer(
                             onEvent(Event.ContributionReceived(msg.playerId, msg.amount))
                         }
 
+                        is NetworkMessage.StatePreviewRequest -> {
+                            // 仅预览：回复一次 StateSync 后立即关闭连接，不将该客户端注册到 clients 中
+                            val previewSync = NetworkMessage.StateSync(
+                                players = hostPlayersProvider(),
+                                handCounter = handCounterProvider(),
+                                transactions = txProvider().takeLast(50),
+                                contributions = contributionsProvider(),
+                                blindsState = blindsStateProvider(),
+                                blindsEnabled = blindsEnabledProvider(),
+                                sidePotEnabled = sidePotEnabledProvider(),
+                                selectedWinnerIds = selectedWinnerIdsProvider(),
+                                foldedPlayerIds = foldedPlayerIdsProvider(),
+                                gameStarted = gameStartedProvider(),
+                                currentRound = currentRoundProvider(),
+                                currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                roundContributions = roundContributionsProvider(),
+                                actedPlayerIds = actedPlayerIdsProvider(),
+                                midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                allowMidGameJoin = allowMidGameJoinProvider()
+                            )
+                            try {
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), previewSync))
+                                writer.newLine()
+                                writer.flush()
+                            } catch (_: Exception) {}
+                            runCatching { socket.close() }
+                            return@launch
+                        }
+
                         is NetworkMessage.MidGameJoinCancel -> {
                             // 客户端主动取消中途加入
                             // 1. 查找是否在 pending 审批队列中（通过 socket 匹配）
@@ -1066,6 +1095,51 @@ class LanTableClient(
         writer = null
         runCatching { socket?.close() }
         socket = null
+    }
+
+    /**
+     * 以"仅预览"模式连接：发送 StatePreviewRequest，收到 StateSync 后触发事件，
+     * 随后连接由服务端关闭，不触发重连逻辑。
+     */
+    fun fetchStatePreview(hostIp: String, onEvent: (Event) -> Unit) {
+        scope.launch {
+            try {
+                val previewSocket = Socket()
+                previewSocket.connect(InetSocketAddress(hostIp, DEFAULT_PORT), 5000)
+                val reader = BufferedReader(InputStreamReader(previewSocket.getInputStream()))
+                val w = BufferedWriter(OutputStreamWriter(previewSocket.getOutputStream()))
+                // 发送预览请求
+                val reqText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.StatePreviewRequest)
+                w.write(reqText); w.newLine(); w.flush()
+                // 读一行 StateSync
+                val line = reader.readLine()
+                if (line != null) {
+                    val msg = runCatching { json.decodeFromString(NetworkMessage.serializer(), line) }.getOrNull()
+                    if (msg is NetworkMessage.StateSync) {
+                        onEvent(Event.StateSync(
+                            players = msg.players,
+                            handCounter = msg.handCounter,
+                            transactions = msg.transactions,
+                            contributions = msg.contributions,
+                            blindsState = msg.blindsState,
+                            blindsEnabled = msg.blindsEnabled,
+                            sidePotEnabled = msg.sidePotEnabled,
+                            selectedWinnerIds = msg.selectedWinnerIds,
+                            foldedPlayerIds = msg.foldedPlayerIds,
+                            gameStarted = msg.gameStarted,
+                            currentRound = msg.currentRound,
+                            currentTurnPlayerId = msg.currentTurnPlayerId,
+                            roundContributions = msg.roundContributions,
+                            actedPlayerIds = msg.actedPlayerIds,
+                            initialDealerIndex = msg.initialDealerIndex,
+                            midGameWaitingPlayerIds = msg.midGameWaitingPlayerIds,
+                            allowMidGameJoin = msg.allowMidGameJoin
+                        ))
+                    }
+                }
+                runCatching { previewSocket.close() }
+            } catch (_: Exception) { /* 预览失败静默处理 */ }
+        }
     }
 
     fun close() {

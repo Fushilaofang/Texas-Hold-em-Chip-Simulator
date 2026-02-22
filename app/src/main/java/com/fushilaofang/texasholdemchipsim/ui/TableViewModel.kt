@@ -355,7 +355,8 @@ class TableViewModel(
     }
 
     /**
-     * 点击中途加入房间后先进入大厅（不连接）
+     * 点击中途加入房间后先进入大厅（预览模式）：
+     * 状态切换到 LOBBY 并立即发起一次性预览连接，获取当前玩家列表。
      */
     fun enterMidGameLobby(room: DiscoveredRoom) {
         stopRoomScan()
@@ -371,6 +372,26 @@ class TableViewModel(
                 canRejoin = false,
                 pendingMidGameRoom = room,
                 info = "游戏进行中，共 ${room.playerCount} 人 | 点击中途加入申请"
+            )
+        }
+        // 立即拉取当前玩家列表（预览，不申请加入）
+        client.fetchStatePreview(room.hostIp, ::handlePreviewStateSync)
+    }
+
+    /**
+     * 处理预览模式下收到的 StateSync：仅更新玩家列表，不改变屏幕/屏幕状态/连接状态。
+     */
+    private fun handlePreviewStateSync(event: LanTableClient.Event) {
+        if (event !is LanTableClient.Event.StateSync) return
+        // 仅在仍处于预览大厅状态时更新
+        if (_uiState.value.pendingMidGameRoom == null) return
+        _uiState.update { state ->
+            state.copy(
+                players = event.players,
+                blindsState = event.blindsState,
+                blindsEnabled = event.blindsEnabled,
+                gameStarted = event.gameStarted,
+                info = "游戏进行中，共 ${event.players.size} 人在线 | 点击中途加入申请"
             )
         }
     }
