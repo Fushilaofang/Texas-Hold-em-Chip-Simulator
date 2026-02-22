@@ -83,7 +83,7 @@ class LanTableServer(
         /** 有新玩家申请中途加入游戏，需要房主审批 */
         data class MidGameJoinRequested(val requestId: String, val playerName: String, val buyIn: Int, val deviceId: String, val avatarBase64: String) : Event()
         /** 中途加入的玩家主动取消了申请或已批准的等待 */
-        data class MidGameJoinCancelled(val requestId: String, val assignedPlayerId: String?) : Event()
+        data class MidGameJoinCancelled(val requestId: String, val assignedPlayerId: String?, val reason: String = "取消了申请") : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -274,7 +274,7 @@ class LanTableServer(
         if (block) {
             synchronized(blockedLock) { blockedDeviceIds.add(pending.deviceId) }
         }
-        // 向客户端发送拒绝消息
+        // 先同步发送拒绝消息给客户端，确保消息到达后再关闭连接
         scope.launch(Dispatchers.IO) {
             try {
                 val reason = if (block) "您已被房主屏蔽" else "房主已拒绝您的申请"
@@ -285,11 +285,13 @@ class LanTableServer(
                 pending.writer.write(msg)
                 pending.writer.newLine()
                 pending.writer.flush()
-                kotlinx.coroutines.delay(200)
             } catch (_: Exception) {}
+            // 消息发送完毕后才唤醒 approvalWatchJob（避免竞态导致 socket 提前关闭）
+            pending.approval.complete(null)
+            // 给客户端一点时间读取消息
+            kotlinx.coroutines.delay(200)
             runCatching { pending.socket.close() }
         }
-        pending.approval.complete(null)
     }
 
     fun stop() {
@@ -640,8 +642,22 @@ class LanTableServer(
                                     pendingApproval = null
 
                                     if (approvedId == null) {
-                                        // 房主拒绝/超时/客户端取消
-                                        runCatching { socket.close() }
+                                        // 区分超时和被拒绝/取消：approval 未完成说明是超时
+                                        if (!approval.isCompleted) {
+                                            // 真正超时（5分钟无操作）— 通知客户端并关闭
+                                            try {
+                                                val timeoutMsg = json.encodeToString(
+                                                    NetworkMessage.serializer(),
+                                                    NetworkMessage.MidGameJoinRejected(reason = "审批超时", blocked = false)
+                                                )
+                                                writer.write(timeoutMsg)
+                                                writer.newLine(); writer.flush()
+                                            } catch (_: Exception) {}
+                                            runCatching { socket.close() }
+                                            // 通知房主端移除该申请并提醒
+                                            onEvent(Event.MidGameJoinCancelled(requestId, null, "审批超时"))
+                                        }
+                                        // 被拒绝/取消 — socket 由 rejectMidGameJoin 或 finally 块关闭
                                         return@launch
                                     }
 
@@ -762,7 +778,7 @@ class LanTableServer(
                 if (pReqId != null) {
                     val removedEntry = synchronized(pendingMidJoinsLock) { pendingMidJoins.remove(pReqId) }
                     removedEntry?.approval?.complete(null)
-                    onEvent(Event.MidGameJoinCancelled(pReqId, null))
+                    onEvent(Event.MidGameJoinCancelled(pReqId, null, "连接已断开"))
                 }
                 val id = assignedId
                 if (id != null) {

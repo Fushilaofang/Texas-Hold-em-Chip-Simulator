@@ -1616,7 +1616,9 @@ class TableViewModel(
                 }
             }
             is LanTableServer.Event.MidGameJoinCancelled -> {
-                // 玩家取消了中途加入
+                // 玩家取消/超时/断线
+                val cancelledName = _uiState.value.pendingMidJoins
+                    .firstOrNull { it.requestId == event.requestId }?.playerName ?: "一位中途加入者"
                 _uiState.update { state ->
                     val updatedPlayers = if (event.assignedPlayerId != null) {
                         state.players.filter { it.id != event.assignedPlayerId }
@@ -1628,7 +1630,7 @@ class TableViewModel(
                         pendingMidJoins = if (event.requestId.isNotBlank()) state.pendingMidJoins.filter { it.requestId != event.requestId } else state.pendingMidJoins,
                         players = updatedPlayers,
                         midGameWaitingPlayerIds = updatedWaiting,
-                        info = "一位中途加入者取消了申请"
+                        info = "$cancelledName ${event.reason}"
                     )
                 }
                 syncToClients()
