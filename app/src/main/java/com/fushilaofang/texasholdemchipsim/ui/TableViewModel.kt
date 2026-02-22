@@ -257,6 +257,7 @@ class TableViewModel(
         roomAdvertiser.stopBroadcast()
         roomScanner.stopScan()
         server.stop()
+        client.stopObserving()
         client.disconnect()
         val canRejoin = prevMode != TableMode.IDLE
         _uiState.update {
@@ -378,11 +379,14 @@ class TableViewModel(
                 canRejoin = false,
                 pendingMidGameRoom = room,
                 midGameJoinStatus = MidGameJoinStatus.NONE,
-                info = "游戏进行中，共 ${room.playerCount} 人 | 点击中途加入申请"
+                info = if (room.playerCount >= room.maxPlayers)
+                    "游戏进行中，共 ${room.playerCount}/${room.maxPlayers} 人 | 房间已满"
+                else
+                    "游戏进行中，共 ${room.playerCount} 人 | 点击中途加入申请"
             )
         }
-        // 立即拉取当前玩家列表（预览，不申请加入）
-        client.fetchStatePreview(room.hostIp, ::handlePreviewStateSync)
+        // 建立持久观察者连接，持续接收服务端推送的玩家列表更新
+        client.startObserving(room.hostIp, ::handlePreviewStateSync)
     }
 
     /**
@@ -398,7 +402,13 @@ class TableViewModel(
                 blindsState = event.blindsState,
                 blindsEnabled = event.blindsEnabled,
                 gameStarted = event.gameStarted,
-                info = "游戏进行中，共 ${event.players.size} 人在线 | 点击中途加入申请"
+                info = run {
+                    val maxP = _uiState.value.pendingMidGameRoom?.maxPlayers ?: 10
+                    if (event.players.size >= maxP)
+                        "游戏进行中，共 ${event.players.size}/$maxP 人在线 | 房间已满"
+                    else
+                        "游戏进行中，共 ${event.players.size} 人在线 | 点击中途加入申请"
+                }
             )
         }
     }
@@ -428,6 +438,7 @@ class TableViewModel(
                 info = "正在加入「${room.roomName}」..."
             )
         }
+        client.stopObserving()  // 从观察者模式切换到正式连接
         client.connect(room.hostIp, state.savedPlayerName.ifBlank { "玩家" }, state.savedBuyIn, deviceId, state.savedAvatarBase64, ::handleClientEvent)
         acquireWakeLock()
     }

@@ -608,6 +608,8 @@ private fun JoinRoomScreen(
                     val started = room.gameStarted
                     val isFull = room.playerCount >= room.maxPlayers
                     val canJoin = !isFull && (!started || room.allowMidGameJoin)
+                    // 满人且已开始的房间可进入预览大厅（无中途加入按鈕）
+                    val canPreview = isFull && started
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -618,6 +620,8 @@ private fun JoinRoomScreen(
                                     } else {
                                         onJoinRoom(room, state.savedPlayerName, state.savedBuyIn)
                                     }
+                                } else if (canPreview) {
+                                    onEnterMidGameLobby(room)
                                 }
                             },
                         colors = CardDefaults.cardColors(
@@ -638,19 +642,19 @@ private fun JoinRoomScreen(
                         ) {
                             Column {
                                 Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                                    color = if (!canJoin) Color.Gray else Color.Unspecified)
+                                    color = if (!canJoin && !canPreview) Color.Gray else Color.Unspecified)
                                 Text(
                                     "房主: ${room.hostName} | ${room.playerCount}/${room.maxPlayers}人",
                                     fontSize = 12.sp, color = Color.Gray
                                 )
                                 when {
-                                    isFull -> Text("房间已满", fontSize = 11.sp, color = Color(0xFFE53935))
+                                    isFull -> Text("房间已满 · 点击查看", fontSize = 11.sp, color = Color(0xFFE53935))
                                     started && !room.allowMidGameJoin -> Text("游戏已开始，不可加入", fontSize = 11.sp, color = Color(0xFFE53935))
                                     started && room.allowMidGameJoin -> Text("游戏进行中 · 允许中途加入", fontSize = 11.sp, color = Color(0xFF1565C0))
                                 }
                             }
                             when {
-                                isFull -> Text("已满", color = Color.Gray, fontSize = 13.sp)
+                                isFull -> Text("查看 →", color = Color(0xFF757575), fontSize = 13.sp)
                                 !started -> Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                 room.allowMidGameJoin -> Text("中途加入 →", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
                                 else -> Text("🔒 已开始", color = Color.Gray, fontSize = 13.sp)
@@ -1014,20 +1018,32 @@ private fun LobbyScreen(
                     }
                 }
                 isPendingEntry -> {
+                    val pendingRoom = state.pendingMidGameRoom
+                    val roomIsFull = pendingRoom != null && sortedPlayers.size >= pendingRoom.maxPlayers
+                    val canMidJoin = pendingRoom?.allowMidGameJoin == true && !roomIsFull
                     // 预览状态：已通过预览连接获取玩家列表，可直接显示人数
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            if (sortedPlayers.isNotEmpty())
-                                "游戏进行中，共 ${sortedPlayers.size} 人在线"
-                            else
-                                "正在获取玩家列表...",
-                            fontSize = 13.sp, color = Color.Gray
+                            when {
+                                sortedPlayers.isEmpty() -> "正在获取玩家列表..."
+                                roomIsFull -> "游戏进行中，共 ${sortedPlayers.size}/${pendingRoom!!.maxPlayers} 人 | 房间已满"
+                                else -> "游戏进行中，共 ${sortedPlayers.size} 人在线"
+                            },
+                            fontSize = 13.sp,
+                            color = if (roomIsFull) Color(0xFFE53935) else Color.Gray
                         )
-                        Button(
-                            onClick = onStartMidGameJoin,
-                            modifier = Modifier.fillMaxWidth().height(56.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
-                        ) { Text("中途加入", fontSize = 18.sp) }
+                        if (canMidJoin) {
+                            Button(
+                                onClick = onStartMidGameJoin,
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
+                            ) { Text("中途加入", fontSize = 18.sp) }
+                        } else {
+                            OutlinedButton(
+                                onClick = onLeave,
+                                modifier = Modifier.fillMaxWidth().height(56.dp)
+                            ) { Text("返回主界面", fontSize = 18.sp) }
+                        }
                     }
                 }
                 isMidGameJoiner -> {

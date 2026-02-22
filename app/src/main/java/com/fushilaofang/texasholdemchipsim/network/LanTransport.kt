@@ -49,6 +49,10 @@ class LanTableServer(
     private val pendingMidJoins = mutableMapOf<String, PendingMidJoin>()
     private val pendingMidJoinsLock = Any()
 
+    /** 已进入大厅预览（StatePreviewRequest）且保持持久连接的观察者 */
+    private val observerClients = mutableMapOf<Socket, BufferedWriter>()
+    private val observerLock = Any()
+
     private data class PendingMidJoin(
         val requestId: String,
         val playerName: String,
@@ -260,6 +264,35 @@ class LanTableServer(
                 }
             }
         }
+
+        // 同步推送给正在等待房主审批的中途加入玩家（尚未进入 clients，需单独通知）
+        synchronized(pendingMidJoinsLock) {
+            pendingMidJoins.values.forEach { pending ->
+                try {
+                    pending.writer.write(text)
+                    pending.writer.newLine()
+                    pending.writer.flush()
+                } catch (_: Exception) {
+                    // 连接已断开，等待各自协程清理
+                }
+            }
+        }
+
+        // 同步推送给持久观察者（已进入大厅预览的玩家）
+        val staleObservers = mutableListOf<Socket>()
+        synchronized(observerLock) {
+            observerClients.forEach { (sock, w) ->
+                try {
+                    w.write(text)
+                    w.newLine()
+                    w.flush()
+                } catch (_: Exception) {
+                    staleObservers.add(sock)
+                }
+            }
+            staleObservers.forEach { observerClients.remove(it) }
+        }
+        staleObservers.forEach { runCatching { it.close() } }
     }
 
     /** 房主批准某个中途加入申请，唤醒挂起的协程完成注册 */
@@ -312,6 +345,11 @@ class LanTableServer(
                 it.readerJob.cancel()
             }
             clients.clear()
+        }
+        // 关闭所有持久观察者连接
+        synchronized(observerLock) {
+            observerClients.forEach { (sock, _) -> runCatching { sock.close() } }
+            observerClients.clear()
         }
         runCatching { serverSocket?.close() }
         serverSocket = null
@@ -377,7 +415,8 @@ class LanTableServer(
                         }
 
                         is NetworkMessage.StatePreviewRequest -> {
-                            // 仅预览：回复一次 StateSync 后立即关闭连接，不将该客户端注册到 clients 中
+                            // 持久观察者：回复初始 StateSync，保持连接，注册到 observerClients
+                            // 后续每次 broadcastState() 时会推送最新玩家列表，直到客户端主动断开
                             val previewSync = NetworkMessage.StateSync(
                                 players = hostPlayersProvider(),
                                 handCounter = handCounterProvider(),
@@ -401,8 +440,8 @@ class LanTableServer(
                                 writer.newLine()
                                 writer.flush()
                             } catch (_: Exception) {}
-                            runCatching { socket.close() }
-                            return@launch
+                            // 注册为持久观察者，不关闭连接；readLine() 继续阻塞直到客户端断开
+                            synchronized(observerLock) { observerClients[socket] = writer }
                         }
 
                         is NetworkMessage.RequestRoomState -> {
@@ -780,6 +819,8 @@ class LanTableServer(
                 onEvent(Event.Error("客户端处理失败: ${ex.message ?: "未知错误"}"))
             } finally {
                 approvalWatchJob?.cancel()
+                // 观察者断开时从列表中移除
+                synchronized(observerLock) { observerClients.remove(socket) }
                 // 自动清理未决的中途加入申请（客户端断开连接时）
                 val pReqId = pendingRequestId
                 if (pReqId != null) {
@@ -1161,23 +1202,29 @@ class LanTableClient(
         socket = null
     }
 
+    /** 持久观察者连接（用于大厅预览，保持接收状态更新直到主动断开） */
+    @Volatile private var observerSocket: Socket? = null
+    private var observerJob: Job? = null
+
     /**
-     * 以"仅预览"模式连接：发送 StatePreviewRequest，收到 StateSync 后触发事件，
-     * 随后连接由服务端关闭，不触发重连逻辑。
+     * 以持久观察者模式连接：发送 StatePreviewRequest 后保持连接，
+     * 持续接收服务端推送的 StateSync 更新，直到调用 [stopObserving]。
+     * 不触发重连逻辑，不占用主连接 socket/writer。
      */
-    fun fetchStatePreview(hostIp: String, onEvent: (Event) -> Unit) {
-        scope.launch {
+    fun startObserving(hostIp: String, onEvent: (Event) -> Unit) {
+        stopObserving()
+        observerJob = scope.launch {
             try {
-                val previewSocket = Socket()
-                previewSocket.connect(InetSocketAddress(hostIp, DEFAULT_PORT), 5000)
-                val reader = BufferedReader(InputStreamReader(previewSocket.getInputStream()))
-                val w = BufferedWriter(OutputStreamWriter(previewSocket.getOutputStream()))
-                // 发送预览请求
+                val sock = Socket()
+                sock.connect(InetSocketAddress(hostIp, DEFAULT_PORT), 5000)
+                observerSocket = sock
+                val reader = BufferedReader(InputStreamReader(sock.getInputStream()))
+                val w = BufferedWriter(OutputStreamWriter(sock.getOutputStream()))
                 val reqText = json.encodeToString(NetworkMessage.serializer(), NetworkMessage.StatePreviewRequest)
                 w.write(reqText); w.newLine(); w.flush()
-                // 读一行 StateSync
-                val line = reader.readLine()
-                if (line != null) {
+                // 持续读取 StateSync，直到连接断开或被取消
+                while (isActive) {
+                    val line = reader.readLine() ?: break
                     val msg = runCatching { json.decodeFromString(NetworkMessage.serializer(), line) }.getOrNull()
                     if (msg is NetworkMessage.StateSync) {
                         onEvent(Event.StateSync(
@@ -1201,9 +1248,19 @@ class LanTableClient(
                         ))
                     }
                 }
-                runCatching { previewSocket.close() }
-            } catch (_: Exception) { /* 预览失败静默处理 */ }
+            } catch (_: Exception) { /* 观察者连接断开，静默处理 */ } finally {
+                runCatching { observerSocket?.close() }
+                observerSocket = null
+            }
         }
+    }
+
+    /** 停止持久观察（离开大厅预览时调用） */
+    fun stopObserving() {
+        observerJob?.cancel()
+        observerJob = null
+        runCatching { observerSocket?.close() }
+        observerSocket = null
     }
 
     fun close() {
