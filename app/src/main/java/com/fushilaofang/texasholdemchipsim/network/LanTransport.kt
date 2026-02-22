@@ -567,6 +567,27 @@ class LanTableServer(
                                 synchronized(pendingMidJoinsLock) { pendingMidJoins[requestId] = pending }
                                 writer.write(json.encodeToString(NetworkMessage.serializer(), NetworkMessage.MidGameJoinPending))
                                 writer.newLine(); writer.flush()
+                                // 立即发送 StateSync 让中途加入者看到玩家列表
+                                val preSync = NetworkMessage.StateSync(
+                                    players = hostPlayersProvider(),
+                                    handCounter = handCounterProvider(),
+                                    transactions = txProvider().takeLast(50),
+                                    contributions = contributionsProvider(),
+                                    blindsState = blindsStateProvider(),
+                                    blindsEnabled = blindsEnabledProvider(),
+                                    sidePotEnabled = sidePotEnabledProvider(),
+                                    selectedWinnerIds = selectedWinnerIdsProvider(),
+                                    foldedPlayerIds = foldedPlayerIdsProvider(),
+                                    gameStarted = gameStartedProvider(),
+                                    currentRound = currentRoundProvider(),
+                                    currentTurnPlayerId = currentTurnPlayerIdProvider(),
+                                    roundContributions = roundContributionsProvider(),
+                                    actedPlayerIds = actedPlayerIdsProvider(),
+                                    midGameWaitingPlayerIds = midGameWaitingPlayerIdsProvider(),
+                                    allowMidGameJoin = allowMidGameJoinProvider()
+                                )
+                                writer.write(json.encodeToString(NetworkMessage.serializer(), preSync))
+                                writer.newLine(); writer.flush()
                                 onEvent(Event.MidGameJoinRequested(requestId, msg.playerName, msg.buyIn, msg.deviceId, msg.avatarBase64))
 
                                 // 挂起等待房主审批（最多等 5 分钟）
@@ -622,6 +643,14 @@ class LanTableServer(
                                 // 后续不返回，继续监听该客户端的消息
                             } else {
                                 // 全新玩家正常加入（游戏未开始）
+                                // 检查是否已满人（10人上限）
+                                val currentCount = hostPlayersProvider().size
+                                if (currentCount >= 10) {
+                                    val err = NetworkMessage.Error(reason = "房间已满，无法加入")
+                                    writer.write(json.encodeToString(NetworkMessage.serializer(), err))
+                                    writer.newLine(); writer.flush()
+                                    socket.close(); return@launch
+                                }
                                 val playerId = UUID.randomUUID().toString()
                                 assignedId = playerId
                                 val seatOrder = hostPlayersProvider().size

@@ -29,7 +29,8 @@ data class DiscoveredRoom(
     val playerCount: Int,
     val hostName: String,
     val gameStarted: Boolean = false,
-    val allowMidGameJoin: Boolean = false
+    val allowMidGameJoin: Boolean = false,
+    val maxPlayers: Int = 10
 ) {
     /** 最后收到广播的时间（本机时间戳，不序列化） */
     @kotlinx.serialization.Transient
@@ -46,7 +47,8 @@ private data class RoomBroadcast(
     val playerCount: Int,
     val hostName: String,
     val gameStarted: Boolean = false,
-    val allowMidGameJoin: Boolean = false
+    val allowMidGameJoin: Boolean = false,
+    val maxPlayers: Int = 10
 )
 
 private val json = Json { ignoreUnknownKeys = true }
@@ -64,7 +66,8 @@ class RoomAdvertiser {
         hostName: String,
         playerCountProvider: () -> Int,
         gameStartedProvider: () -> Boolean = { false },
-        allowMidGameJoinProvider: () -> Boolean = { false }
+        allowMidGameJoinProvider: () -> Boolean = { false },
+        maxPlayersProvider: () -> Int = { 10 }
     ) {
         stopBroadcast()
         broadcastJob = scope.launch {
@@ -80,7 +83,8 @@ class RoomAdvertiser {
                         playerCount = playerCountProvider(),
                         hostName = hostName,
                         gameStarted = gameStartedProvider(),
-                        allowMidGameJoin = allowMidGameJoinProvider()
+                        allowMidGameJoin = allowMidGameJoinProvider(),
+                        maxPlayers = maxPlayersProvider()
                     )
                     val data = json.encodeToString(RoomBroadcast.serializer(), packet).toByteArray()
                     val dgram = DatagramPacket(data, data.size, broadcastAddress, DISCOVERY_PORT)
@@ -142,7 +146,8 @@ class RoomScanner {
                             playerCount = broadcast.playerCount,
                             hostName = broadcast.hostName,
                             gameStarted = broadcast.gameStarted,
-                            allowMidGameJoin = broadcast.allowMidGameJoin
+                            allowMidGameJoin = broadcast.allowMidGameJoin,
+                            maxPlayers = broadcast.maxPlayers
                         ).also { it.lastSeen = System.currentTimeMillis() }
                         rooms[key] = room
                     } catch (_: java.net.SocketTimeoutException) {

@@ -409,12 +409,7 @@ class TableViewModel(
         }
     }
 
-    fun toggleSidePot(enabled: Boolean) {
-        _uiState.update { it.copy(sidePotEnabled = enabled) }
-        if (_uiState.value.mode == TableMode.HOST) {
-            syncToClients()
-        }
-    }
+    // sidePotEnabled is always true now (toggle removed from UI)
 
     // ==================== 中途加入管理（房主） ====================
 

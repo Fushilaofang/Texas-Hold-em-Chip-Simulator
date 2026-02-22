@@ -213,7 +213,7 @@ class MainActivity : ComponentActivity() {
                         onStartGame = vm::startGame,
                         onLeave = vm::goHome,
                         onToggleBlinds = vm::toggleBlinds,
-                        onToggleSidePot = vm::toggleSidePot,
+
                         onUpdateBlindsConfig = vm::updateBlindsConfig,
                         onMovePlayer = vm::movePlayer,
                         onSetInitialDealer = vm::setInitialDealer,
@@ -231,7 +231,7 @@ class MainActivity : ComponentActivity() {
                         onFold = vm::foldMyself,
                         onSettleAndAdvance = vm::settleAndAdvance,
                         onToggleBlinds = vm::toggleBlinds,
-                        onToggleSidePot = vm::toggleSidePot,
+
                         onUpdateBlindsConfig = vm::updateBlindsConfig,
                         onMovePlayer = vm::movePlayer,
                         onSetDealer = vm::setDealerInGame,
@@ -602,7 +602,8 @@ private fun JoinRoomScreen(
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.discoveredRooms) { room ->
                     val started = room.gameStarted
-                    val canJoin = !started || room.allowMidGameJoin
+                    val isFull = room.playerCount >= room.maxPlayers
+                    val canJoin = !isFull && (!started || room.allowMidGameJoin)
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -613,6 +614,7 @@ private fun JoinRoomScreen(
                             },
                         colors = CardDefaults.cardColors(
                             containerColor = when {
+                                isFull -> Color(0xFFF5F5F5)
                                 !started -> Color(0xFFE8F5E9)
                                 room.allowMidGameJoin -> Color(0xFFE3F2FD)
                                 else -> Color(0xFFF5F5F5)
@@ -630,16 +632,17 @@ private fun JoinRoomScreen(
                                 Text(room.roomName, fontWeight = FontWeight.Bold, fontSize = 16.sp,
                                     color = if (!canJoin) Color.Gray else Color.Unspecified)
                                 Text(
-                                    "房主: ${room.hostName} | ${room.playerCount}人在线",
+                                    "房主: ${room.hostName} | ${room.playerCount}/${room.maxPlayers}人",
                                     fontSize = 12.sp, color = Color.Gray
                                 )
-                                if (started && !room.allowMidGameJoin) {
-                                    Text("游戏已开始，不可加入", fontSize = 11.sp, color = Color(0xFFE53935))
-                                } else if (started && room.allowMidGameJoin) {
-                                    Text("游戏进行中 · 允许中途加入", fontSize = 11.sp, color = Color(0xFF1565C0))
+                                when {
+                                    isFull -> Text("房间已满", fontSize = 11.sp, color = Color(0xFFE53935))
+                                    started && !room.allowMidGameJoin -> Text("游戏已开始，不可加入", fontSize = 11.sp, color = Color(0xFFE53935))
+                                    started && room.allowMidGameJoin -> Text("游戏进行中 · 允许中途加入", fontSize = 11.sp, color = Color(0xFF1565C0))
                                 }
                             }
                             when {
+                                isFull -> Text("已满", color = Color.Gray, fontSize = 13.sp)
                                 !started -> Text("加入 →", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                 room.allowMidGameJoin -> Text("中途加入 →", color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
                                 else -> Text("🔒 已开始", color = Color.Gray, fontSize = 13.sp)
@@ -666,7 +669,7 @@ private fun LobbyScreen(
     onStartGame: () -> Unit,
     onLeave: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    onToggleSidePot: (Boolean) -> Unit,
+
     onUpdateBlindsConfig: (Int, Int) -> Unit,
     onMovePlayer: (String, Int) -> Unit,
     onSetInitialDealer: (Int) -> Unit,
@@ -712,6 +715,9 @@ private fun LobbyScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("盲注自动轮转", fontSize = 13.sp)
                 Switch(checked = state.blindsEnabled, onCheckedChange = onToggleBlinds)
+                Spacer(Modifier.weight(1f))
+                Text("中途加入", fontSize = 13.sp)
+                Switch(checked = state.allowMidGameJoin, onCheckedChange = onToggleAllowMidGameJoin)
             }
             // 盲注金额编辑
             if (state.blindsEnabled) {
@@ -750,10 +756,6 @@ private fun LobbyScreen(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                     ) { Text("应用") }
                 }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("允许中途加入", fontSize = 13.sp)
-                Switch(checked = state.allowMidGameJoin, onCheckedChange = onToggleAllowMidGameJoin)
             }
         }
 
@@ -958,7 +960,7 @@ private fun LobbyScreen(
                         onClick = onToggleReady,   // 复用 onToggleReady 触发加入申请（ViewModel 中识别 gameStarted 状态处理）
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
-                    ) { Text("申请加入", fontSize = 18.sp) }
+                    ) { Text("中途加入", fontSize = 18.sp) }
                 }
                 else -> {
                     val selfReady = sortedPlayers.firstOrNull { it.id == state.selfId }?.isReady ?: false
@@ -990,7 +992,7 @@ private fun GameScreen(
     onFold: () -> Unit,
     onSettleAndAdvance: () -> Unit,
     onToggleBlinds: (Boolean) -> Unit,
-    onToggleSidePot: (Boolean) -> Unit,
+
     onUpdateBlindsConfig: (Int, Int) -> Unit,
     onMovePlayer: (String, Int) -> Unit,
     onSetDealer: (Int) -> Unit,
@@ -1405,29 +1407,7 @@ private fun GameScreen(
                         )
                         HorizontalDivider()
                     }
-                    if (state.mode == TableMode.HOST) {
-                        DropdownMenuItem(
-                            text = {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("边池规则", modifier = Modifier.weight(1f))
-                                    Switch(
-                                        checked = state.sidePotEnabled,
-                                        onCheckedChange = {
-                                            onToggleSidePot(it)
-                                            showMenu = false
-                                        },
-                                        modifier = Modifier.height(28.dp)
-                                    )
-                                }
-                            },
-                            onClick = {}
-                        )
-                        HorizontalDivider()
-                    }
+
                     DropdownMenuItem(
                         text = { Text("修改头像和昵称") },
                         onClick = { showMenu = false; showEditProfileDialog = true }
