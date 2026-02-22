@@ -567,17 +567,26 @@ class TableViewModel(
         val state = _uiState.value
         if (state.mode != TableMode.HOST) return
         val player = state.players.firstOrNull { it.id == playerId } ?: return
+        val wasCurrentTurn = state.gameStarted && state.currentTurnPlayerId == playerId
         _uiState.update { s ->
             s.copy(
                 players = s.players.filter { it.id != playerId },
                 midGameWaitingPlayerIds = s.midGameWaitingPlayerIds - playerId,
                 foldedPlayerIds = s.foldedPlayerIds - playerId,
                 disconnectedPlayerIds = s.disconnectedPlayerIds - playerId,
+                // 清除该玩家在当前轮的行动记录，保证 isRoundComplete 计算干净
+                actedPlayerIds = s.actedPlayerIds - playerId,
+                roundContributions = s.roundContributions - playerId,
                 info = "${player.name} 已被移除${if (block) "并屏蔽" else ""}"
             )
         }
         server.kickPlayer(playerId, player.deviceId, block)
-        syncToClients()
+        // 若被踢玩家正是当前行动者，自动推进到下一位（否则游戏永久卡死）
+        if (wasCurrentTurn) {
+            advanceTurnOrRound()
+        } else {
+            syncToClients()
+        }
         saveSession()
     }
 
