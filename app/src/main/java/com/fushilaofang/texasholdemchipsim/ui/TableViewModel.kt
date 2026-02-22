@@ -328,7 +328,8 @@ class TableViewModel(
             seatOrder = 0,
             isReady = true, // 房主默认准备
             avatarBase64 = _uiState.value.savedAvatarBase64,
-            deviceId = deviceId
+            deviceId = deviceId,
+            isHost = true
         )
         val initialBlinds = blindsManager.initialize(1, blindsConfig)
 

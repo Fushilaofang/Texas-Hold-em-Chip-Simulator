@@ -387,6 +387,29 @@ private fun HomeScreen(
 // ==================== 头像组件 ====================
 
 /**
+ * 统一风格的状态标识胶囊
+ */
+@Composable
+private fun StatusBadge(
+    label: String,
+    containerColor: Color,
+    textColor: Color = Color.White
+) {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = containerColor
+    ) {
+        Text(
+            text = label,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            color = textColor,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
  * 可点击的圆形头像框：有头像时显示图片，无头像时显示首字母占位符
  */
 @Composable
@@ -911,17 +934,17 @@ private fun LobbyScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 if (isDealer) {
-                                    Text("[庄]", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Bold)
+                                    StatusBadge("庄", Color(0xFFE65100))
                                 }
                                 Text(
-                                    "${player.name}",
+                                    player.name,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 if (isOffline) {
-                                    Text("[掉线]", fontSize = 11.sp, color = Color.Red)
+                                    StatusBadge("掉线", Color(0xFFE53935))
                                 }
                                 if (state.midGameWaitingPlayerIds.contains(player.id)) {
-                                    Text("[待加入]", fontSize = 11.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.Bold)
+                                    StatusBadge("待加入", Color(0xFF1565C0))
                                 }
                             }
                             Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
@@ -945,12 +968,18 @@ private fun LobbyScreen(
                             }
                         }
 
-                        Text(
-                            if (player.isReady) "✔ 已准备" else "未准备",
-                            color = if (player.isReady) Color(0xFF388E3C) else Color.Gray,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 8.dp)
-                        )
+                        // 右侧状态标识：房主 / 游戏中 / 已准备 / 未准备，风格统一
+                        Spacer(Modifier.width(8.dp))
+                        when {
+                            player.isHost ->
+                                StatusBadge("房主", Color(0xFFE65100))
+                            state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
+                                StatusBadge("游戏中", Color(0xFF6A1B9A))
+                            player.isReady ->
+                                StatusBadge("已准备", Color(0xFF388E3C))
+                            else ->
+                                StatusBadge("未准备", Color(0xFF9E9E9E))
+                        }
                     }
                 }
             }
