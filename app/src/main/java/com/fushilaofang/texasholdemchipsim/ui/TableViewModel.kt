@@ -619,6 +619,7 @@ class TableViewModel(
         val actionable = sorted.filter { p ->
             !state.foldedPlayerIds.contains(p.id) &&
             !state.disconnectedPlayerIds.contains(p.id) &&
+            !state.midGameWaitingPlayerIds.contains(p.id) &&
             !isPlayerAllIn(state, p)
         }
         if (actionable.isEmpty()) return ""
@@ -646,6 +647,7 @@ class TableViewModel(
         val actionable = sorted.filter { p ->
             !state.foldedPlayerIds.contains(p.id) &&
             !state.disconnectedPlayerIds.contains(p.id) &&
+            !state.midGameWaitingPlayerIds.contains(p.id) &&
             !isPlayerAllIn(state, p)
         }
         if (actionable.isEmpty()) return ""
@@ -661,6 +663,7 @@ class TableViewModel(
         val actionable = sorted.filter { p ->
             !state.foldedPlayerIds.contains(p.id) &&
             !state.disconnectedPlayerIds.contains(p.id) &&
+            !state.midGameWaitingPlayerIds.contains(p.id) &&
             !isPlayerAllIn(state, p)
         }
         if (actionable.isEmpty()) return ""
