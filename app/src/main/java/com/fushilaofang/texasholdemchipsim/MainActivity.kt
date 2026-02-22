@@ -90,6 +90,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.focus.onFocusChanged
@@ -393,18 +394,21 @@ private fun HomeScreen(
 private fun StatusBadge(
     label: String,
     containerColor: Color,
-    textColor: Color = Color.White
+    textColor: Color = Color.White,
+    fixedWidth: Dp? = null
 ) {
     Surface(
         shape = RoundedCornerShape(4.dp),
-        color = containerColor
+        color = containerColor,
+        modifier = if (fixedWidth != null) Modifier.width(fixedWidth) else Modifier
     ) {
         Text(
             text = label,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             color = textColor,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp)
         )
     }
 }
@@ -970,15 +974,16 @@ private fun LobbyScreen(
 
                         // 右侧状态标识：房主 / 游戏中 / 已准备 / 未准备，风格统一
                         Spacer(Modifier.width(8.dp))
+                        val rightBadgeWidth = 52.dp
                         when {
                             player.isHost ->
-                                StatusBadge("房主", Color(0xFFE65100))
+                                StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
                             state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
-                                StatusBadge("游戏中", Color(0xFF6A1B9A))
+                                StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
                             player.isReady ->
-                                StatusBadge("已准备", Color(0xFF388E3C))
+                                StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
                             else ->
-                                StatusBadge("未准备", Color(0xFF9E9E9E))
+                                StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
                         }
                     }
                 }

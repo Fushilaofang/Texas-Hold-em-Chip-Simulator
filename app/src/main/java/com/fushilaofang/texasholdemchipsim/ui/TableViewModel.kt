@@ -251,6 +251,7 @@ class TableViewModel(
         // 保存会话信息以便后续重连
         val prevMode = _uiState.value.mode
         val prevTableName = _uiState.value.tableName
+        val prevSelfId = _uiState.value.selfId
         saveSession()
         releaseWakeLock()
         // 断开连接，回到首页（使用 stop/disconnect 而非 close，保留 scope 以便重连）
@@ -259,7 +260,9 @@ class TableViewModel(
         server.stop()
         client.stopObserving()
         client.disconnect()
-        val canRejoin = prevMode != TableMode.IDLE
+        // 只有实际以玩家身份加入过（selfId 不为空）才允许重连；
+        // 纯观察者/审批中返回大厅的情况 selfId 为空，不应显示重新加入按钮
+        val canRejoin = prevMode != TableMode.IDLE && prevSelfId.isNotBlank()
         _uiState.update {
             it.copy(
                 mode = TableMode.IDLE,
