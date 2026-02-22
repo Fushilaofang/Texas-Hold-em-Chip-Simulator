@@ -273,6 +273,8 @@ class TableViewModel(
                 canRejoin = canRejoin,
                 lastSessionTableName = if (canRejoin) prevTableName else "",
                 lastSessionMode = if (canRejoin) prevMode else TableMode.IDLE,
+                midGameJoinStatus = MidGameJoinStatus.NONE,
+                pendingMidGameRoom = null,
                 info = "准备开始"
             )
         }
@@ -375,6 +377,7 @@ class TableViewModel(
                 discoveredRooms = emptyList(),
                 canRejoin = false,
                 pendingMidGameRoom = room,
+                midGameJoinStatus = MidGameJoinStatus.NONE,
                 info = "游戏进行中，共 ${room.playerCount} 人 | 点击中途加入申请"
             )
         }
@@ -421,6 +424,7 @@ class TableViewModel(
                 discoveredRooms = emptyList(),
                 canRejoin = false,
                 pendingMidGameRoom = null,
+                midGameJoinStatus = MidGameJoinStatus.NONE,
                 info = "正在加入「${room.roomName}」..."
             )
         }
@@ -446,6 +450,7 @@ class TableViewModel(
                 isScanning = false,
                 discoveredRooms = emptyList(),
                 canRejoin = false,
+                midGameJoinStatus = MidGameJoinStatus.NONE,
                 info = "正在加入「${room.roomName}」..."
             )
         }
