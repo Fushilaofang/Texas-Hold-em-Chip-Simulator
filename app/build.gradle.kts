@@ -7,12 +7,12 @@ plugins {
 
 android {
     namespace = "com.fushilaofang.texasholdemchipsim"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.fushilaofang.texasholdemchipsim"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 

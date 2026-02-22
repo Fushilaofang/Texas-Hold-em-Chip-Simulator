@@ -4,7 +4,7 @@
             "outputFile": "com.fushilaofang.texasholdemchipsim.app-mergeDebugResources-45:/values-v30/values-v30.xml",
             "map": [
                 {
-                    "source": "/home/codespace/.gradle/caches/8.9/transforms/e5e03166f0ad3a5ed027dae514e9e66c/transformed/material3-release/res/values-v30/values-v30.xml",
+                    "source": "C:\\Users\\FU\\.gradle\\caches\\8.9\\transforms\\e5e03166f0ad3a5ed027dae514e9e66c\\transformed\\material3-release\\res\\values-v30\\values-v30.xml",
                     "from": {
                         "startLines": "2",
                         "startColumns": "4",
