@@ -1586,16 +1586,20 @@ class TableViewModel(
             is LanTableServer.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableServer.Event.PlayerDisconnected -> {
-                // 若该玩家已不在列表中（如被 kickPlayer 移除），则忽略此掉线事件，
-                // 避免被踢玩家断开连接时重新以掉线状态残留在大厅。
-                val playerStillExists = _uiState.value.players.any { it.id == event.playerId }
-                if (!playerStillExists) return@handleServerEvent
-                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
-                _uiState.update { state ->
-                    state.copy(
-                        disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
-                        info = "$pName 掉线，等待重连..."
-                    )
+                val playerInList = _uiState.value.players.firstOrNull { it.id == event.playerId }
+                if (playerInList == null) {
+                    // 玩家已不在列表（被 kickPlayer 移除后断连），
+                    // 广播一次最新玩家列表，确保所有端同步干净状态。
+                    syncToClients()
+                } else {
+                    // 真正断线：标记为掉线并同步
+                    _uiState.update { state ->
+                        state.copy(
+                            disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
+                            info = "${playerInList.name} 掉线，等待重连..."
+                        )
+                    }
+                    syncToClients()
                 }
             }
             is LanTableServer.Event.PlayerReconnected -> {

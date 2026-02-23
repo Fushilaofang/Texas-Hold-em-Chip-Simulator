@@ -53,10 +53,6 @@ class LanTableServer(
     private val observerClients = mutableMapOf<Socket, BufferedWriter>()
     private val observerLock = Any()
 
-    /** 已被房主主动踢出的玩家 ID，finally 块中检查以跳过 PlayerDisconnected 事件 */
-    private val kickedPlayerIds = mutableSetOf<String>()
-    private val kickedLock = Any()
-
     private data class PendingMidJoin(
         val requestId: String,
         val playerName: String,
@@ -335,7 +331,6 @@ class LanTableServer(
         heartbeatJob?.cancel()
         heartbeatJob = null
         synchronized(disconnectedLock) { disconnectedPlayers.clear() }
-        synchronized(kickedLock) { kickedPlayerIds.clear() }
         // 新建房间时重置屏蔽列表，被屏蔽的玩家可以加入新房间
         synchronized(blockedLock) { blockedDeviceIds.clear() }
         // 拒绝所有正在等待审批的中途加入申请
@@ -377,8 +372,6 @@ class LanTableServer(
             synchronized(blockedLock) { blockedDeviceIds.add(deviceId) }
         }
         val conn = synchronized(clientsLock) { clients[playerId] } ?: return
-        // 先标记为已踢出，防止 finally 块中触发 PlayerDisconnected 事件
-        synchronized(kickedLock) { kickedPlayerIds.add(playerId) }
         scope.launch(Dispatchers.IO) {
             try {
                 val reason = if (block) "您已被房主移除并屏蔽" else "您已被房主移除"
@@ -396,8 +389,6 @@ class LanTableServer(
             synchronized(disconnectedLock) { disconnectedPlayers.remove(playerId) }
             conn.readerJob.cancel()
             runCatching { conn.socket.close() }
-            // 连接完全关闭后再清理标记
-            synchronized(kickedLock) { kickedPlayerIds.remove(playerId) }
         }
     }
 
@@ -872,15 +863,11 @@ class LanTableServer(
                 val id = assignedId
                 if (id != null) {
                     synchronized(clientsLock) { clients.remove(id) }
-                    // 若该玩家是被房主主动踢出的，则跳过掉线事件，避免在大厅残留掉线卡片
-                    val wasKicked = synchronized(kickedLock) { kickedPlayerIds.contains(id) }
-                    if (!wasKicked) {
-                        // 真正断线进入等待重连期，不立即移除玩家
-                        synchronized(disconnectedLock) {
-                            disconnectedPlayers[id] = System.currentTimeMillis()
-                        }
-                        onEvent(Event.PlayerDisconnected(id))
+                    // 掉线进入等待重连期，不立即移除玩家
+                    synchronized(disconnectedLock) {
+                        disconnectedPlayers[id] = System.currentTimeMillis()
                     }
+                    onEvent(Event.PlayerDisconnected(id))
                 }
                 runCatching { socket.close() }
             }
