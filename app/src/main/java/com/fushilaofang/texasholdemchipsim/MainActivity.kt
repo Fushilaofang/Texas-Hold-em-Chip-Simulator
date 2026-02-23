@@ -67,6 +67,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -399,7 +401,11 @@ fun ReorderablePlayerColumn(
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedPlayerId by remember { mutableStateOf<String?>(null) }
     var overscrollTarget by remember { mutableFloatStateOf(0f) }
+    var containerBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var draggedItemBounds by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
     val spacingPx = with(LocalDensity.current) { 8.dp.toPx() }
+    val overscrollEdgePx = with(LocalDensity.current) { 80.dp.toPx() }
+    val maxScrollSpeed = with(LocalDensity.current) { 15.dp.toPx() }
 
     val checkSwaps = {
         val di = draggedItemIndex
@@ -430,7 +436,7 @@ fun ReorderablePlayerColumn(
     androidx.compose.runtime.LaunchedEffect(overscrollTarget, draggedItemIndex) {
         if (draggedItemIndex != null && overscrollTarget != 0f && scrollState != null) {
             while (true) {
-                val scrolled = scrollState.scrollBy(overscrollTarget * 15f)
+                val scrolled = scrollState.scrollBy(overscrollTarget * maxScrollSpeed)
                 if (scrolled != 0f) {
                     dragOffset += scrolled
                     checkSwaps()
@@ -447,7 +453,12 @@ fun ReorderablePlayerColumn(
         }
     }
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier.onGloballyPositioned {
+            containerBounds = it.boundsInRoot()
+        },
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         localPlayers.forEachIndexed { index, player ->
             androidx.compose.runtime.key(player.id) {
                 val isDragging = draggedItemIndex == index
@@ -494,16 +505,11 @@ fun ReorderablePlayerColumn(
                                     dragOffset += dragAmount.y
                                     checkSwaps()
 
-                                    if (scrollState != null && initialDraggedIndex != null) {
-                                        val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
-                                        val contentHeight = localPlayers.size * effectiveHeight
-                                        val viewportHeight = contentHeight - scrollState.maxValue
-                                        val viewportY = (initialDraggedIndex!! * effectiveHeight) + dragOffset + change.position.y - scrollState.value
-
-                                        val edge = 150f
-                                        if (viewportY < edge && scrollState.value > 0) {
+                                    if (scrollState != null && containerBounds != null && draggedItemBounds != null) {
+                                        val fingerY = draggedItemBounds!!.top + change.position.y
+                                        if (fingerY < containerBounds!!.top + overscrollEdgePx && scrollState.value > 0) {
                                             overscrollTarget = -1f
-                                        } else if (viewportY > viewportHeight - edge && scrollState.value < scrollState.maxValue) {
+                                        } else if (fingerY > containerBounds!!.bottom - overscrollEdgePx && scrollState.value < scrollState.maxValue) {
                                             overscrollTarget = 1f
                                         } else {
                                             overscrollTarget = 0f
@@ -520,8 +526,13 @@ fun ReorderablePlayerColumn(
                 androidx.compose.foundation.layout.Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
                         .offset { IntOffset(0, yOffset.roundToInt()) }
+                        .onGloballyPositioned { 
+                            if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() 
+                            if (isDragging) {
+                                draggedItemBounds = it.boundsInRoot()
+                            }
+                        }
                         .zIndex(if (isDragging) 1f else 0f)
                         .scale(if (isDragging) 1.05f else 1f)
                 ) {
