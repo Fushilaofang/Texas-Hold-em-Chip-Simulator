@@ -1662,15 +1662,16 @@ private fun GameScreen(
 
     // 重新选庄对话框
     if (showDealerPanel && state.mode == TableMode.HOST) {
+        var selectedDealerIdx by remember(state.blindsState.dealerIndex) { mutableStateOf(state.blindsState.dealerIndex) }
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showDealerPanel = false },
             title = { Text("重新选庄", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("点击[设为庄]指定庄家", fontSize = 12.sp, color = Color.Gray)
+                    Text("点击[设为庄]指定庄家，点击完成生效", fontSize = 12.sp, color = Color.Gray)
                     val dealerPlayers = state.players.sortedBy { it.seatOrder }
                     dealerPlayers.forEachIndexed { seatIdx, player ->
-                        val isDealer = seatIdx == state.blindsState.dealerIndex
+                        val isDealer = seatIdx == selectedDealerIdx
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1678,7 +1679,8 @@ private fun GameScreen(
                                     color = if (isDealer) Color(0xFFFFF8E1) else MaterialTheme.colorScheme.surfaceVariant,
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
                                 )
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                .padding(horizontal = 10.dp)
+                                .height(44.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -1706,20 +1708,24 @@ private fun GameScreen(
                             }
                             if (!isDealer) {
                                 Button(
-                                    onClick = { onSetDealer(seatIdx); showDealerPanel = false },
+                                    onClick = { selectedDealerIdx = seatIdx },
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                     modifier = Modifier.height(32.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1565C0))
                                 ) { Text("设为庄", fontSize = 12.sp) }
-                            } else {
-                                Text("当前庄家", fontSize = 11.sp, color = Color(0xFFE65100), fontWeight = FontWeight.Medium)
                             }
                         }
                     }
                 }
             },
             confirmButton = {
-                Button(onClick = { showDealerPanel = false }) { Text("完成") }
+                Button(onClick = { 
+                    onSetDealer(selectedDealerIdx)
+                    showDealerPanel = false 
+                }) { Text("完成") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDealerPanel = false }) { Text("取消") }
             }
         )
     }
