@@ -963,11 +963,27 @@ class TableViewModel(
         if (state.mode != TableMode.HOST) return
         val sorted = state.players.sortedBy { it.seatOrder }.toMutableList()
         val player = sorted.firstOrNull { it.id == playerId } ?: return
+        
+        // 记录原本庄家的 player ID
+        val oldDealerIndex = state.blindsState.dealerIndex
+        val dealerPlayerId = sorted.getOrNull(oldDealerIndex)?.id
+
         sorted.remove(player)
         val safeIndex = newIndex.coerceIn(0, sorted.size)
         sorted.add(safeIndex, player)
         val reindexed = sorted.mapIndexed { idx, p -> p.copy(seatOrder = idx) }
-        _uiState.update { it.copy(players = reindexed) }
+        
+        // 如果游戏已开始，且我们找到了原本的庄家，则将庄家索引更新为该玩家的新座位号，
+        // 确保“庄”标识锚定在玩家身上，而不是固定在某个顺位。
+        var newBlindsState = state.blindsState
+        if (state.gameStarted && dealerPlayerId != null) {
+            val newDealerIndex = reindexed.indexOfFirst { it.id == dealerPlayerId }
+            if (newDealerIndex != -1) {
+                newBlindsState = newBlindsState.copy(dealerIndex = newDealerIndex)
+            }
+        }
+
+        _uiState.update { it.copy(players = reindexed, blindsState = newBlindsState) }
         syncToClients()
     }
 
