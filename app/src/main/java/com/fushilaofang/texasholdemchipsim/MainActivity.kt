@@ -416,14 +416,20 @@ private fun StatusBadge(
         color = containerColor,
         modifier = if (fixedWidth != null) Modifier.width(fixedWidth) else Modifier
     ) {
-        Text(
-            text = label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = textColor,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 2.dp)
-        )
+        androidx.compose.foundation.layout.Box(
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .then(if (fixedWidth != null) Modifier.fillMaxWidth() else Modifier)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
     }
 }
 
