@@ -333,7 +333,7 @@ fun SwipeablePlayerRow(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(70.dp)
-                    .background(Color(0xFFF57C00), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                    .background(Color(0xFFF57C00), shape = if (onKick == null) androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp) else androidx.compose.ui.graphics.RectangleShape)
                     .clickable {
                         onSetDealer()
                         scope.launch { offsetX.animateTo(0f) }
@@ -347,7 +347,7 @@ fun SwipeablePlayerRow(
                     modifier = Modifier
                         .fillMaxHeight()
                         .width(70.dp)
-                        .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                        .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp))
                         .clickable {
                             onKick()
                             scope.launch { offsetX.animateTo(0f) }
@@ -1037,7 +1037,7 @@ private fun LobbyScreen(
                 androidx.compose.material3.AlertDialog(
                     onDismissRequest = { blockConfirmInfo = null },
                     title = { Text("确认屏蔽", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
-                    text = { Text("确定要屏蔽 ${target.playerName} 吗？屏蔽后该设备将无法再次申请加入本房间。") },
+                    text = { Text("确定要屏蔽 ${target.playerName} 吗？屏蔽后该玩家将无法再次申请加入本房间。") },
                     confirmButton = {
                         Button(
                             onClick = { onRejectMidGameJoin(target.requestId, true); blockConfirmInfo = null },
@@ -1138,7 +1138,7 @@ private fun LobbyScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("同时屏蔽此设备（禁止再次加入）", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("同时屏蔽此玩家", fontSize = 13.sp, modifier = Modifier.weight(1f))
                             Switch(checked = kickBlockDevice, onCheckedChange = { kickBlockDevice = it })
                         }
                     }
