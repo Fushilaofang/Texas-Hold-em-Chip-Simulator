@@ -65,6 +65,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.draw.scale
 import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -310,12 +311,7 @@ fun SwipeablePlayerRow(
     onKick: (() -> Unit)?,
     content: @Composable () -> Unit
 ) {
-    if (!isHost) {
-        content()
-        return
-    }
-
-    val maxSwipe = if (onKick != null) 80.dp else 0.dp
+    val maxSwipe = if (isHost && onKick != null) 80.dp else 0.dp
     val density = LocalDensity.current
     val maxSwipePx = with(density) { maxSwipe.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -349,28 +345,32 @@ fun SwipeablePlayerRow(
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onHorizontalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
-                            scope.launch {
-                                val newVal = (offsetX.value + dragAmount).coerceIn(-maxSwipePx, 0f)
-                                offsetX.snapTo(newVal)
-                            }
-                        },
-                        onDragEnd = {
-                            scope.launch {
-                                if (offsetX.value < -maxSwipePx / 2) {
-                                    offsetX.animateTo(-maxSwipePx)
-                                } else {
-                                    offsetX.animateTo(0f)
+                .then(
+                    if (maxSwipePx > 0f) {
+                        Modifier.pointerInput(Unit) {
+                            detectHorizontalDragGestures(
+                                onHorizontalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
+                                    scope.launch {
+                                        val newVal = (offsetX.value + dragAmount).coerceIn(-maxSwipePx, 0f)
+                                        offsetX.snapTo(newVal)
+                                    }
+                                },
+                                onDragEnd = {
+                                    scope.launch {
+                                        if (offsetX.value < -maxSwipePx / 2) {
+                                            offsetX.animateTo(-maxSwipePx)
+                                        } else {
+                                            offsetX.animateTo(0f)
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    scope.launch { offsetX.animateTo(0f) }
                                 }
-                            }
-                        },
-                        onDragCancel = {
-                            scope.launch { offsetX.animateTo(0f) }
+                            )
                         }
-                    )
-                }
+                    } else Modifier
+                )
         ) {
             content()
         }
@@ -408,10 +408,13 @@ fun ReorderablePlayerColumn(
                     Modifier.pointerInput(player.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = { _ ->
-                                draggedItemIndex = index
-                                initialDraggedIndex = index
-                                draggedPlayerId = player.id
-                                dragOffset = 0f
+                                val currentIndex = localPlayers.indexOfFirst { it.id == player.id }
+                                if (currentIndex != -1) {
+                                    draggedItemIndex = currentIndex
+                                    initialDraggedIndex = currentIndex
+                                    draggedPlayerId = player.id
+                                    dragOffset = 0f
+                                }
                             },
                             onDragEnd = {
                                 val id = draggedPlayerId
@@ -473,6 +476,7 @@ fun ReorderablePlayerColumn(
                         .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
                         .offset { IntOffset(0, yOffset.roundToInt()) }
                         .zIndex(if (isDragging) 1f else 0f)
+                        .scale(if (isDragging) 1.2f else 1f)
                 ) {
                     itemContent(player, index, isDragging, dragModifier)
                 }
@@ -1174,7 +1178,7 @@ private fun LobbyScreen(
                 onKick = if (!player.isHost) { { kickConfirmPlayer = player; kickBlockDevice = false } } else null
             ) {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(dragModifier),
                     colors = CardDefaults.cardColors(containerColor = cardColor)
                 ) {
                     Row(
@@ -1217,16 +1221,6 @@ private fun LobbyScreen(
                                 StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
                         }
 
-                        // 拖拽图标 (仅房主且人数>1时显示)
-                        if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
-                            Spacer(Modifier.width(8.dp))
-                            Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "拖拽调整顺序",
-                                modifier = Modifier.then(dragModifier).padding(4.dp),
-                                tint = Color.Gray
-                            )
-                        }
                     }
                 }
             }
@@ -1559,6 +1553,7 @@ private fun GameScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(dragModifier)
                                 .background(
                                     color = if (isDealer) Color(0xFFFFF8E1) else MaterialTheme.colorScheme.surfaceVariant,
                                     shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
@@ -1588,12 +1583,6 @@ private fun GameScreen(
                                 modifier = Modifier.weight(1f),
                                 fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
                                 fontSize = 14.sp
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Menu,
-                                contentDescription = "拖拽调整顺序",
-                                modifier = Modifier.then(dragModifier).padding(4.dp),
-                                tint = Color.Gray
                             )
                         }
                     }
