@@ -452,6 +452,19 @@ fun ReorderablePlayerColumn(
         if (draggedItemIndex == null) {
             localPlayers.clear()
             localPlayers.addAll(players)
+        } else {
+            // 拖拽进行中：若有玩家被移除（如被房主踢出），也必须立即从 localPlayers 中移除，
+            // 否则 previousPlayers 已更新到新列表，后续重组因 players == previousPlayers
+            // 而跳过更新，导致残留的"掉线"卡片永远无法消除（只有拖动才会触发 onDragEnd 里的 clear/addAll）
+            val validIds = players.map { it.id }.toSet()
+            val hasRemovals = localPlayers.any { it.id !in validIds }
+            if (hasRemovals) {
+                localPlayers.removeAll { it.id !in validIds }
+                // 同时取消当前拖拽，避免 draggedItemIndex 指向已不存在的元素
+                draggedItemIndex = null
+                dragOffset = 0f
+                draggedPlayerId = null
+            }
         }
     }
 
