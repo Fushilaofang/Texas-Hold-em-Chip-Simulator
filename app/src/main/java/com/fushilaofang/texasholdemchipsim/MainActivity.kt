@@ -1604,6 +1604,7 @@ private fun GameScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("长按拖拽调整顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
+                    val dealerPlayerId = reorderPlayers.getOrNull(state.blindsState.dealerIndex)?.id
                     val listScrollState = rememberScrollState()
                     ReorderablePlayerColumn(
                         players = reorderPlayers,
@@ -1612,7 +1613,7 @@ private fun GameScreen(
                         modifier = Modifier.weight(1f, fill = false).verticalScroll(listScrollState),
                         scrollState = listScrollState
                     ) { player, seatIdx, isDragging, dragModifier ->
-                        val isDealer = seatIdx == state.blindsState.dealerIndex
+                        val isDealer = player.id == dealerPlayerId
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1626,13 +1627,7 @@ private fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             if (isDealer) {
-                                Text(
-                                    "[庄]",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFE65100),
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.widthIn(min = 28.dp)
-                                )
+                                StatusBadge("庄", Color(0xFFE65100))
                             } else {
                                 Text(
                                     "${seatIdx + 1}.",
