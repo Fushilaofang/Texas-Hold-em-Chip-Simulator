@@ -57,6 +57,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,11 +68,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -285,6 +294,108 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
+            }
+        }
+    }
+}
+
+// ==================== 自定义可拖拽列表组件 ====================
+
+@Composable
+fun ReorderablePlayerColumn(
+    players: List<PlayerState>,
+    onMovePlayer: (String, Int) -> Unit,
+    canReorder: Boolean,
+    modifier: Modifier = Modifier,
+    itemContent: @Composable (player: PlayerState, index: Int, isDragging: Boolean, dragModifier: Modifier) -> Unit
+) {
+    val localPlayers = remember { mutableStateListOf<PlayerState>() }
+    androidx.compose.runtime.LaunchedEffect(players) {
+        localPlayers.clear()
+        localPlayers.addAll(players)
+    }
+
+    var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var itemHeightPx by remember { mutableFloatStateOf(0f) }
+    var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
+    var draggedPlayerId by remember { mutableStateOf<String?>(null) }
+    val spacingPx = with(LocalDensity.current) { 8.dp.toPx() }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        localPlayers.forEachIndexed { index, player ->
+            val isDragging = draggedItemIndex == index
+            val dragModifier = if (canReorder) {
+                Modifier.pointerInput(player.id) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = {
+                            draggedItemIndex = index
+                            initialDraggedIndex = index
+                            draggedPlayerId = player.id
+                            dragOffset = 0f
+                        },
+                        onDragEnd = {
+                            val id = draggedPlayerId
+                            val finalIdx = draggedItemIndex
+                            val initIdx = initialDraggedIndex
+                            draggedItemIndex = null
+                            dragOffset = 0f
+                            draggedPlayerId = null
+                            if (id != null && finalIdx != null && initIdx != null && initIdx != finalIdx) {
+                                onMovePlayer(id, finalIdx)
+                            } else {
+                                localPlayers.clear()
+                                localPlayers.addAll(players)
+                            }
+                        },
+                        onDragCancel = {
+                            draggedItemIndex = null
+                            dragOffset = 0f
+                            draggedPlayerId = null
+                            localPlayers.clear()
+                            localPlayers.addAll(players)
+                        },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            dragOffset += dragAmount.y
+
+                            val di = draggedItemIndex
+                            val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+
+                            if (di != null) {
+                                var newIndex = di
+                                val threshold = effectiveHeight * 0.5f
+                                while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
+                                    val temp = localPlayers[newIndex]
+                                    localPlayers[newIndex] = localPlayers[newIndex + 1]
+                                    localPlayers[newIndex + 1] = temp
+                                    newIndex += 1
+                                    dragOffset -= effectiveHeight
+                                }
+                                while (dragOffset < -threshold && newIndex > 0) {
+                                    val temp = localPlayers[newIndex]
+                                    localPlayers[newIndex] = localPlayers[newIndex - 1]
+                                    localPlayers[newIndex - 1] = temp
+                                    newIndex -= 1
+                                    dragOffset += effectiveHeight
+                                }
+                                draggedItemIndex = newIndex
+                            }
+                        }
+                    )
+                }
+            } else Modifier
+
+            val yOffset = if (isDragging) dragOffset else 0f
+
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
+                    .offset { IntOffset(0, yOffset.roundToInt()) }
+                    .zIndex(if (isDragging) 1f else 0f)
+            ) {
+                itemContent(player, index, isDragging, dragModifier)
             }
         }
     }
@@ -957,100 +1068,95 @@ private fun LobbyScreen(
             Text("玩家列表", fontWeight = FontWeight.Bold)
             if (state.mode == TableMode.HOST) {
                 Spacer(Modifier.weight(1f))
-                Text("点击玩家设为庄家 / ▲▼调整顺序", fontSize = 11.sp, color = Color.Gray)
+                Text("点击玩家设为庄家", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
-        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(sortedPlayers, key = { it.id }) { player ->
-                val isMe = player.id == state.selfId
-                val isOffline = state.disconnectedPlayerIds.contains(player.id)
-                val seatIdx = sortedPlayers.indexOf(player)
-                val isDealer = seatIdx == state.initialDealerIndex
+        ReorderablePlayerColumn(
+            players = sortedPlayers,
+            onMovePlayer = onMovePlayer,
+            canReorder = state.mode == TableMode.HOST && sortedPlayers.size > 1,
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
+        ) { player, seatIdx, isDragging, dragModifier ->
+            val isMe = player.id == state.selfId
+            val isOffline = state.disconnectedPlayerIds.contains(player.id)
+            val isDealer = seatIdx == state.initialDealerIndex
 
-                val cardColor = when {
-                    isOffline -> Color(0xFFEEEEEE)
-                    isDealer -> Color(0xFFFFF8E1)
-                    player.isReady -> Color(0xFFE8F5E9)
-                    else -> MaterialTheme.colorScheme.surface
-                }
-                Card(
+            val cardColor = when {
+                isOffline -> Color(0xFFEEEEEE)
+                isDealer -> Color(0xFFFFF8E1)
+                player.isReady -> Color(0xFFE8F5E9)
+                else -> MaterialTheme.colorScheme.surface
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (state.mode == TableMode.HOST && !isDragging) {
+                            Modifier.clickable { onSetInitialDealer(seatIdx) }
+                        } else Modifier
+                    ),
+                colors = CardDefaults.cardColors(containerColor = cardColor)
+            ) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(
-                            if (state.mode == TableMode.HOST) {
-                                Modifier.clickable { onSetInitialDealer(seatIdx) }
-                            } else Modifier
-                        ),
-                    colors = CardDefaults.cardColors(containerColor = cardColor)
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (isDealer) {
-                                    StatusBadge("庄", Color(0xFFE65100))
-                                }
-                                Text(
-                                    player.name,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                if (isOffline) {
-                                    StatusBadge("掉线", Color(0xFFE53935))
-                                }
-                                if (state.midGameWaitingPlayerIds.contains(player.id)) {
-                                    StatusBadge("待加入", Color(0xFF1565C0))
-                                }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (isDealer) {
+                                StatusBadge("庄", Color(0xFFE65100))
                             }
-                            Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
-                        }
-
-                        // 房主：▲▼ 调整顺序按钮
-                        if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                OutlinedButton(
-                                    onClick = { if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1) },
-                                    enabled = seatIdx > 0,
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) { Text("▲", fontSize = 12.sp) }
-                                OutlinedButton(
-                                    onClick = { if (seatIdx < sortedPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1) },
-                                    enabled = seatIdx < sortedPlayers.size - 1,
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(32.dp)
-                                ) { Text("▼", fontSize = 12.sp) }
+                            Text(
+                                player.name,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (isOffline) {
+                                StatusBadge("掉线", Color(0xFFE53935))
+                            }
+                            if (state.midGameWaitingPlayerIds.contains(player.id)) {
+                                StatusBadge("待加入", Color(0xFF1565C0))
                             }
                         }
+                        Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
+                    }
 
-                        // 房主可移除非房主玩家
-                        if (state.mode == TableMode.HOST && !player.isHost) {
-                            Spacer(Modifier.width(4.dp))
-                            OutlinedButton(
-                                onClick = { kickConfirmPlayer = player; kickBlockDevice = false },
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                modifier = Modifier.height(32.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
-                            ) { Text("移除", fontSize = 11.sp) }
-                        }
-                        // 右侧状态标识：房主 / 游戏中 / 已准备 / 未准备，风格统一
+                    // 房主可移除非房主玩家
+                    if (state.mode == TableMode.HOST && !player.isHost) {
+                        Spacer(Modifier.width(4.dp))
+                        OutlinedButton(
+                            onClick = { kickConfirmPlayer = player; kickBlockDevice = false },
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                            modifier = Modifier.height(32.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
+                        ) { Text("移除", fontSize = 11.sp) }
+                    }
+                    // 右侧状态标识
+                    Spacer(Modifier.width(8.dp))
+                    val rightBadgeWidth = 52.dp
+                    when {
+                        player.isHost ->
+                            StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
+                        state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
+                            StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
+                        player.isReady ->
+                            StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
+                        else ->
+                            StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
+                    }
+
+                    // 拖拽图标 (仅房主且人数>1时显示)
+                    if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
                         Spacer(Modifier.width(8.dp))
-                        val rightBadgeWidth = 52.dp
-                        when {
-                            player.isHost ->
-                                StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
-                            state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
-                                StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
-                            player.isReady ->
-                                StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
-                            else ->
-                                StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "拖拽调整顺序",
+                            modifier = Modifier.then(dragModifier).padding(4.dp),
+                            tint = Color.Gray
+                        )
                     }
                 }
             }
@@ -1372,9 +1478,14 @@ private fun GameScreen(
             title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("点击 ▲▼ 调整座位顺序", fontSize = 12.sp, color = Color.Gray)
+                    Text("长按右侧三横线拖拽调整座位顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
-                    reorderPlayers.forEachIndexed { seatIdx, player ->
+                    ReorderablePlayerColumn(
+                        players = reorderPlayers,
+                        onMovePlayer = onMovePlayer,
+                        canReorder = true,
+                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                    ) { player, seatIdx, isDragging, dragModifier ->
                         val isDealer = seatIdx == state.blindsState.dealerIndex
                         Row(
                             modifier = Modifier
@@ -1409,20 +1520,12 @@ private fun GameScreen(
                                 fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
                                 fontSize = 14.sp
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                                OutlinedButton(
-                                    onClick = { if (seatIdx > 0) onMovePlayer(player.id, seatIdx - 1) },
-                                    enabled = seatIdx > 0,
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(30.dp)
-                                ) { Text("▲", fontSize = 12.sp) }
-                                OutlinedButton(
-                                    onClick = { if (seatIdx < reorderPlayers.size - 1) onMovePlayer(player.id, seatIdx + 1) },
-                                    enabled = seatIdx < reorderPlayers.size - 1,
-                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(30.dp)
-                                ) { Text("▼", fontSize = 12.sp) }
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "拖拽调整顺序",
+                                modifier = Modifier.then(dragModifier).padding(4.dp),
+                                tint = Color.Gray
+                            )
                         }
                     }
                 }
