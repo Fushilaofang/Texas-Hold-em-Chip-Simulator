@@ -1163,7 +1163,7 @@ private fun LobbyScreen(
             Text("玩家列表", fontWeight = FontWeight.Bold)
             if (state.mode == TableMode.HOST) {
                 Spacer(Modifier.weight(1f))
-                Text("长按拖拽调整顺序 / 左滑移除非房主", fontSize = 11.sp, color = Color.Gray)
+                Text("长按拖拽调整顺序 / 左滑移除玩家", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
@@ -1221,15 +1221,19 @@ private fun LobbyScreen(
                         // 右侧状态标识
                         Spacer(Modifier.width(8.dp))
                         val rightBadgeWidth = 52.dp
-                        when {
-                            player.isHost ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (player.isHost) {
                                 StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
-                            state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
+                            }
+                            if (state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id)) {
                                 StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
-                            player.isReady ->
-                                StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
-                            else ->
-                                StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
+                            } else if (!player.isHost) {
+                                if (player.isReady) {
+                                    StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
+                                } else {
+                                    StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
+                                }
+                            }
                         }
 
                     }
@@ -1304,15 +1308,11 @@ private fun LobbyScreen(
                     val canMidJoin = pendingRoom?.allowMidGameJoin == true && !roomIsFull
                     // 预览状态：已通过预览连接获取玩家列表，可直接显示人数
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            when {
-                                sortedPlayers.isEmpty() -> "正在获取玩家列表..."
-                                roomIsFull -> "游戏进行中，共 ${sortedPlayers.size}/${pendingRoom!!.maxPlayers} 人 | 房间已满"
-                                else -> "游戏进行中，共 ${sortedPlayers.size} 人在线"
-                            },
-                            fontSize = 13.sp,
-                            color = if (roomIsFull) Color(0xFFE53935) else Color.Gray
-                        )
+                        if (sortedPlayers.isEmpty()) {
+                            Text("正在获取玩家列表...", fontSize = 13.sp, color = Color.Gray)
+                        } else if (roomIsFull) {
+                            Text("房间已满", fontSize = 13.sp, color = Color(0xFFE53935))
+                        }
                         if (canMidJoin) {
                             Button(
                                 onClick = onStartMidGameJoin,
@@ -1553,6 +1553,7 @@ private fun GameScreen(
             title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("长按拖拽调整顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
                     ReorderablePlayerColumn(
                         players = reorderPlayers,
