@@ -391,17 +391,19 @@ fun ReorderablePlayerColumn(
     itemContent: @Composable (player: PlayerState, index: Int, isDragging: Boolean, dragModifier: Modifier) -> Unit
 ) {
     val localPlayers = remember { mutableStateListOf<PlayerState>() }
-    androidx.compose.runtime.LaunchedEffect(players) {
-        localPlayers.clear()
-        localPlayers.addAll(players)
-    }
-
     var draggedItemIndex by remember { mutableStateOf<Int?>(null) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var itemHeightPx by remember { mutableFloatStateOf(0f) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedPlayerId by remember { mutableStateOf<String?>(null) }
     val spacingPx = with(LocalDensity.current) { 8.dp.toPx() }
+
+    androidx.compose.runtime.LaunchedEffect(players) {
+        if (draggedItemIndex == null) {
+            localPlayers.clear()
+            localPlayers.addAll(players)
+        }
+    }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         localPlayers.forEachIndexed { index, player ->
@@ -411,12 +413,14 @@ fun ReorderablePlayerColumn(
                     Modifier.pointerInput(player.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = { _ ->
-                                val currentIndex = localPlayers.indexOfFirst { it.id == player.id }
-                                if (currentIndex != -1) {
-                                    draggedItemIndex = currentIndex
-                                    initialDraggedIndex = currentIndex
-                                    draggedPlayerId = player.id
-                                    dragOffset = 0f
+                                if (draggedItemIndex == null) {
+                                    val currentIndex = localPlayers.indexOfFirst { it.id == player.id }
+                                    if (currentIndex != -1) {
+                                        draggedItemIndex = currentIndex
+                                        initialDraggedIndex = currentIndex
+                                        draggedPlayerId = player.id
+                                        dragOffset = 0f
+                                    }
                                 }
                             },
                             onDragEnd = {
@@ -441,31 +445,33 @@ fun ReorderablePlayerColumn(
                                 localPlayers.addAll(players)
                             },
                             onDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: androidx.compose.ui.geometry.Offset ->
-                                change.consume()
-                                dragOffset += dragAmount.y
+                                if (draggedPlayerId == player.id) {
+                                    change.consume()
+                                    dragOffset += dragAmount.y
 
-                                val di = draggedItemIndex
-                                val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+                                    val di = draggedItemIndex
+                                    val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
 
-                                if (di != null) {
-                                    var newIndex = di
-                                    val threshold = effectiveHeight * 0.5f
-                                    androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                                        while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
-                                            val temp = localPlayers[newIndex]
-                                            localPlayers[newIndex] = localPlayers[newIndex + 1]
-                                            localPlayers[newIndex + 1] = temp
-                                            newIndex += 1
-                                            dragOffset -= effectiveHeight
+                                    if (di != null) {
+                                        var newIndex = di
+                                        val threshold = effectiveHeight * 0.5f
+                                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                            while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
+                                                val temp = localPlayers[newIndex]
+                                                localPlayers[newIndex] = localPlayers[newIndex + 1]
+                                                localPlayers[newIndex + 1] = temp
+                                                newIndex += 1
+                                                dragOffset -= effectiveHeight
+                                            }
+                                            while (dragOffset < -threshold && newIndex > 0) {
+                                                val temp = localPlayers[newIndex]
+                                                localPlayers[newIndex] = localPlayers[newIndex - 1]
+                                                localPlayers[newIndex - 1] = temp
+                                                newIndex -= 1
+                                                dragOffset += effectiveHeight
+                                            }
+                                            draggedItemIndex = newIndex
                                         }
-                                        while (dragOffset < -threshold && newIndex > 0) {
-                                            val temp = localPlayers[newIndex]
-                                            localPlayers[newIndex] = localPlayers[newIndex - 1]
-                                            localPlayers[newIndex - 1] = temp
-                                            newIndex -= 1
-                                            dragOffset += effectiveHeight
-                                        }
-                                        draggedItemIndex = newIndex
                                     }
                                 }
                             }
