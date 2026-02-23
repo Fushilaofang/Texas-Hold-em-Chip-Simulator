@@ -406,8 +406,8 @@ fun ReorderablePlayerColumn(
                 val isDragging = draggedItemIndex == index
                 val dragModifier = if (canReorder) {
                     Modifier.pointerInput(player.id) {
-                        detectVerticalDragGestures(
-                            onDragStart = {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { _ ->
                                 draggedItemIndex = index
                                 initialDraggedIndex = index
                                 draggedPlayerId = player.id
@@ -434,8 +434,9 @@ fun ReorderablePlayerColumn(
                                 localPlayers.clear()
                                 localPlayers.addAll(players)
                             },
-                            onVerticalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
-                                dragOffset += dragAmount
+                            onDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: androidx.compose.ui.geometry.Offset ->
+                                change.consume()
+                                dragOffset += dragAmount.y
 
                                 val di = draggedItemIndex
                                 val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
