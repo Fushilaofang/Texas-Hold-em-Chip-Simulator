@@ -386,6 +386,7 @@ class LanTableServer(
             // 给客户端足够时间读取消息后再断开
             kotlinx.coroutines.delay(400)
             synchronized(clientsLock) { clients.remove(playerId) }
+            synchronized(disconnectedLock) { disconnectedPlayers.remove(playerId) }
             conn.readerJob.cancel()
             runCatching { conn.socket.close() }
         }
