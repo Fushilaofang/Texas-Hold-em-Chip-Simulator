@@ -1675,13 +1675,7 @@ private fun GameScreen(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             if (isDealer) {
-                                Text(
-                                    "[庄]",
-                                    fontSize = 11.sp,
-                                    color = Color(0xFFE65100),
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.widthIn(min = 28.dp)
-                                )
+                                StatusBadge("庄", Color(0xFFE65100))
                             } else {
                                 Text(
                                     "${seatIdx + 1}.",
