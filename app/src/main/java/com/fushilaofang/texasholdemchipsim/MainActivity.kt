@@ -87,6 +87,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -414,10 +416,11 @@ private fun StatusBadge(
     Surface(
         shape = RoundedCornerShape(4.dp),
         color = containerColor,
-        modifier = if (fixedWidth != null) Modifier.width(fixedWidth) else Modifier
+        modifier = if (fixedWidth != null) Modifier.width(fixedWidth) else Modifier.wrapContentSize(Alignment.Center)
     ) {
         androidx.compose.foundation.layout.Box(
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.Center,
+            modifier = if (fixedWidth != null) Modifier else Modifier.wrapContentSize(Alignment.Center)
         ) {
             Text(
                 text = label,
@@ -426,7 +429,7 @@ private fun StatusBadge(
                 color = textColor,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .then(if (fixedWidth != null) Modifier.fillMaxWidth() else Modifier)
+                    .then(if (fixedWidth != null) Modifier.fillMaxWidth() else Modifier.wrapContentWidth())
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             )
         }
