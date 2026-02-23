@@ -61,6 +61,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Switch
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -295,6 +299,92 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun SwipeablePlayerRow(
+    isHost: Boolean,
+    onSetDealer: () -> Unit,
+    onKick: (() -> Unit)?,
+    content: @Composable () -> Unit
+) {
+    if (!isHost) {
+        content()
+        return
+    }
+
+    val maxSwipe = if (onKick != null) 140.dp else 70.dp
+    val density = LocalDensity.current
+    val maxSwipePx = with(density) { maxSwipe.toPx() }
+    val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
+    val scope = rememberCoroutineScope()
+
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            androidx.compose.foundation.layout.Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(70.dp)
+                    .background(Color(0xFFF57C00), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                    .clickable {
+                        onSetDealer()
+                        scope.launch { offsetX.animateTo(0f) }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text("设庄", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            if (onKick != null) {
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(70.dp)
+                        .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 4.dp, bottomEnd = 4.dp))
+                        .clickable {
+                            onKick()
+                            scope.launch { offsetX.animateTo(0f) }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("移除", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
+                            scope.launch {
+                                val newVal = (offsetX.value + dragAmount).coerceIn(-maxSwipePx, 0f)
+                                offsetX.snapTo(newVal)
+                            }
+                        },
+                        onDragEnd = {
+                            scope.launch {
+                                if (offsetX.value < -maxSwipePx / 2) {
+                                    offsetX.animateTo(-maxSwipePx)
+                                } else {
+                                    offsetX.animateTo(0f)
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { offsetX.animateTo(0f) }
+                        }
+                    )
+                }
+        ) {
+            content()
         }
     }
 }
@@ -1068,7 +1158,7 @@ private fun LobbyScreen(
             Text("玩家列表", fontWeight = FontWeight.Bold)
             if (state.mode == TableMode.HOST) {
                 Spacer(Modifier.weight(1f))
-                Text("点击玩家设为庄家", fontSize = 11.sp, color = Color.Gray)
+                Text("左滑进行更多操作", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
@@ -1088,75 +1178,66 @@ private fun LobbyScreen(
                 player.isReady -> Color(0xFFE8F5E9)
                 else -> MaterialTheme.colorScheme.surface
             }
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(
-                        if (state.mode == TableMode.HOST && !isDragging) {
-                            Modifier.clickable { onSetInitialDealer(seatIdx) }
-                        } else Modifier
-                    ),
-                colors = CardDefaults.cardColors(containerColor = cardColor)
+
+            SwipeablePlayerRow(
+                isHost = state.mode == TableMode.HOST && !isDragging,
+                onSetDealer = { onSetInitialDealer(seatIdx) },
+                onKick = if (!player.isHost) { { kickConfirmPlayer = player; kickBlockDevice = false } } else null
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardColor)
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (isDealer) {
-                                StatusBadge("庄", Color(0xFFE65100))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (isDealer) {
+                                    StatusBadge("庄", Color(0xFFE65100))
+                                }
+                                Text(
+                                    player.name,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (isOffline) {
+                                    StatusBadge("掉线", Color(0xFFE53935))
+                                }
+                                if (state.midGameWaitingPlayerIds.contains(player.id)) {
+                                    StatusBadge("待加入", Color(0xFF1565C0))
+                                }
                             }
-                            Text(
-                                player.name,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            if (isOffline) {
-                                StatusBadge("掉线", Color(0xFFE53935))
-                            }
-                            if (state.midGameWaitingPlayerIds.contains(player.id)) {
-                                StatusBadge("待加入", Color(0xFF1565C0))
-                            }
+                            Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
                         }
-                        Text("筹码: ${player.chips}", fontSize = 13.sp, color = Color.Gray)
-                    }
 
-                    // 房主可移除非房主玩家
-                    if (state.mode == TableMode.HOST && !player.isHost) {
-                        Spacer(Modifier.width(4.dp))
-                        OutlinedButton(
-                            onClick = { kickConfirmPlayer = player; kickBlockDevice = false },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                            modifier = Modifier.height(32.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFE53935))
-                        ) { Text("移除", fontSize = 11.sp) }
-                    }
-                    // 右侧状态标识
-                    Spacer(Modifier.width(8.dp))
-                    val rightBadgeWidth = 52.dp
-                    when {
-                        player.isHost ->
-                            StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
-                        state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
-                            StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
-                        player.isReady ->
-                            StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
-                        else ->
-                            StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
-                    }
-
-                    // 拖拽图标 (仅房主且人数>1时显示)
-                    if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
+                        // 右侧状态标识
                         Spacer(Modifier.width(8.dp))
-                        Icon(
-                            imageVector = Icons.Default.Menu,
-                            contentDescription = "拖拽调整顺序",
-                            modifier = Modifier.then(dragModifier).padding(4.dp),
-                            tint = Color.Gray
-                        )
+                        val rightBadgeWidth = 52.dp
+                        when {
+                            player.isHost ->
+                                StatusBadge("房主", Color(0xFFE65100), fixedWidth = rightBadgeWidth)
+                            state.gameStarted && !state.midGameWaitingPlayerIds.contains(player.id) ->
+                                StatusBadge("游戏中", Color(0xFF6A1B9A), fixedWidth = rightBadgeWidth)
+                            player.isReady ->
+                                StatusBadge("已准备", Color(0xFF388E3C), fixedWidth = rightBadgeWidth)
+                            else ->
+                                StatusBadge("未准备", Color(0xFF9E9E9E), fixedWidth = rightBadgeWidth)
+                        }
+
+                        // 拖拽图标 (仅房主且人数>1时显示)
+                        if (state.mode == TableMode.HOST && sortedPlayers.size > 1) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Default.Menu,
+                                contentDescription = "拖拽调整顺序",
+                                modifier = Modifier.then(dragModifier).padding(4.dp),
+                                tint = Color.Gray
+                            )
+                        }
                     }
                 }
             }
@@ -1478,7 +1559,6 @@ private fun GameScreen(
             title = { Text("调整玩家顺序", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("长按右侧三横线拖拽调整座位顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
                     ReorderablePlayerColumn(
                         players = reorderPlayers,
