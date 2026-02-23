@@ -307,7 +307,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SwipeablePlayerRow(
     isHost: Boolean,
-    onSetDealer: () -> Unit,
     onKick: (() -> Unit)?,
     content: @Composable () -> Unit
 ) {
@@ -316,7 +315,7 @@ fun SwipeablePlayerRow(
         return
     }
 
-    val maxSwipe = if (onKick != null) 140.dp else 70.dp
+    val maxSwipe = if (onKick != null) 80.dp else 0.dp
     val density = LocalDensity.current
     val maxSwipePx = with(density) { maxSwipe.toPx() }
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -329,31 +328,13 @@ fun SwipeablePlayerRow(
             modifier = Modifier.fillMaxSize(),
             horizontalArrangement = Arrangement.End
         ) {
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .padding(top = 1.dp, bottom = 1.dp)
-                    .fillMaxHeight()
-                    .width(70.dp)
-                    .background(
-                        Color(0xFFF57C00), 
-                        shape = if (onKick == null) androidx.compose.foundation.shape.RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp, topEnd = 12.dp, bottomEnd = 12.dp) 
-                                else androidx.compose.foundation.shape.RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)
-                    )
-                    .clickable {
-                        onSetDealer()
-                        scope.launch { offsetX.animateTo(0f) }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("设庄", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            }
             if (onKick != null) {
                 androidx.compose.foundation.layout.Box(
                     modifier = Modifier
                         .padding(top = 1.dp, bottom = 1.dp, end = 1.dp)
                         .fillMaxHeight()
                         .width(70.dp)
-                        .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp))
+                        .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp, topEnd = 12.dp, bottomEnd = 12.dp))
                         .clickable {
                             onKick()
                             scope.launch { offsetX.animateTo(0f) }
@@ -1166,7 +1147,7 @@ private fun LobbyScreen(
             Text("玩家列表", fontWeight = FontWeight.Bold)
             if (state.mode == TableMode.HOST) {
                 Spacer(Modifier.weight(1f))
-                Text("左滑进行更多操作", fontSize = 11.sp, color = Color.Gray)
+                Text("拖拽调整顺序 / 左滑移除非房主玩家", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
@@ -1178,7 +1159,7 @@ private fun LobbyScreen(
         ) { player, seatIdx, isDragging, dragModifier ->
             val isMe = player.id == state.selfId
             val isOffline = state.disconnectedPlayerIds.contains(player.id)
-            val isDealer = seatIdx == state.initialDealerIndex
+            val isDealer = seatIdx == 0
 
             val cardColor = when {
                 isOffline -> Color(0xFFEEEEEE)
@@ -1189,7 +1170,6 @@ private fun LobbyScreen(
 
             SwipeablePlayerRow(
                 isHost = state.mode == TableMode.HOST && !isDragging,
-                onSetDealer = { onSetInitialDealer(seatIdx) },
                 onKick = if (!player.isHost) { { kickConfirmPlayer = player; kickBlockDevice = false } } else null
             ) {
                 Card(
