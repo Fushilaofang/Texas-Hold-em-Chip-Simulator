@@ -446,7 +446,9 @@ fun ReorderablePlayerColumn(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(players) {
+    var previousPlayers by remember { mutableStateOf<List<PlayerState>?>(null) }
+    if (players != previousPlayers) {
+        previousPlayers = players
         if (draggedItemIndex == null) {
             localPlayers.clear()
             localPlayers.addAll(players)
@@ -1626,22 +1628,28 @@ private fun GameScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (isDealer) {
-                                StatusBadge("庄", Color(0xFFE65100))
-                            } else {
-                                Text(
-                                    "${seatIdx + 1}.",
-                                    fontSize = 13.sp,
-                                    color = Color.Gray,
-                                    modifier = Modifier.widthIn(min = 28.dp)
-                                )
-                            }
                             Text(
-                                player.name,
-                                modifier = Modifier.weight(1f),
-                                fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
-                                fontSize = 14.sp
+                                "${seatIdx + 1}.",
+                                fontSize = 13.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.widthIn(min = 28.dp)
                             )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    player.name,
+                                    fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                if (isDealer) {
+                                    StatusBadge("庄", Color(0xFFE65100))
+                                }
+                            }
                         }
                     }
                 }
@@ -1674,22 +1682,28 @@ private fun GameScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            if (isDealer) {
-                                StatusBadge("庄", Color(0xFFE65100))
-                            } else {
-                                Text(
-                                    "${seatIdx + 1}.",
-                                    fontSize = 13.sp,
-                                    color = Color.Gray,
-                                    modifier = Modifier.widthIn(min = 28.dp)
-                                )
-                            }
                             Text(
-                                player.name,
-                                modifier = Modifier.weight(1f),
-                                fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
-                                fontSize = 14.sp
+                                "${seatIdx + 1}.",
+                                fontSize = 13.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.widthIn(min = 28.dp)
                             )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    player.name,
+                                    fontWeight = if (isDealer) FontWeight.Bold else FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                if (isDealer) {
+                                    StatusBadge("庄", Color(0xFFE65100))
+                                }
+                            }
                             if (!isDealer) {
                                 Button(
                                     onClick = { onSetDealer(seatIdx); showDealerPanel = false },
