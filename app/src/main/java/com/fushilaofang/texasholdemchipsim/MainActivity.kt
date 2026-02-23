@@ -314,6 +314,7 @@ fun SwipeablePlayerRow(
     val maxSwipe = if (isHost && onKick != null) 80.dp else 0.dp
     val density = LocalDensity.current
     val maxSwipePx = with(density) { maxSwipe.toPx() }
+    val currentMaxSwipePx by androidx.compose.runtime.rememberUpdatedState(maxSwipePx)
     val offsetX = remember { androidx.compose.animation.core.Animatable(0f) }
     val scope = rememberCoroutineScope()
 
@@ -345,32 +346,34 @@ fun SwipeablePlayerRow(
         androidx.compose.foundation.layout.Box(
             modifier = Modifier
                 .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                .then(
-                    if (maxSwipePx > 0f) {
-                        Modifier.pointerInput(Unit) {
-                            detectHorizontalDragGestures(
-                                onHorizontalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
-                                    scope.launch {
-                                        val newVal = (offsetX.value + dragAmount).coerceIn(-maxSwipePx, 0f)
-                                        offsetX.snapTo(newVal)
-                                    }
-                                },
-                                onDragEnd = {
-                                    scope.launch {
-                                        if (offsetX.value < -maxSwipePx / 2) {
-                                            offsetX.animateTo(-maxSwipePx)
-                                        } else {
-                                            offsetX.animateTo(0f)
-                                        }
-                                    }
-                                },
-                                onDragCancel = {
-                                    scope.launch { offsetX.animateTo(0f) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
+                            if (currentMaxSwipePx > 0f) {
+                                scope.launch {
+                                    val newVal = (offsetX.value + dragAmount).coerceIn(-currentMaxSwipePx, 0f)
+                                    offsetX.snapTo(newVal)
                                 }
-                            )
+                            }
+                        },
+                        onDragEnd = {
+                            if (currentMaxSwipePx > 0f) {
+                                scope.launch {
+                                    if (offsetX.value < -currentMaxSwipePx / 2) {
+                                        offsetX.animateTo(-currentMaxSwipePx)
+                                    } else {
+                                        offsetX.animateTo(0f)
+                                    }
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            if (currentMaxSwipePx > 0f) {
+                                scope.launch { offsetX.animateTo(0f) }
+                            }
                         }
-                    } else Modifier
-                )
+                    )
+                }
         ) {
             content()
         }
@@ -447,21 +450,23 @@ fun ReorderablePlayerColumn(
                                 if (di != null) {
                                     var newIndex = di
                                     val threshold = effectiveHeight * 0.5f
-                                    while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
-                                        val temp = localPlayers[newIndex]
-                                        localPlayers[newIndex] = localPlayers[newIndex + 1]
-                                        localPlayers[newIndex + 1] = temp
-                                        newIndex += 1
-                                        dragOffset -= effectiveHeight
+                                    androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                        while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
+                                            val temp = localPlayers[newIndex]
+                                            localPlayers[newIndex] = localPlayers[newIndex + 1]
+                                            localPlayers[newIndex + 1] = temp
+                                            newIndex += 1
+                                            dragOffset -= effectiveHeight
+                                        }
+                                        while (dragOffset < -threshold && newIndex > 0) {
+                                            val temp = localPlayers[newIndex]
+                                            localPlayers[newIndex] = localPlayers[newIndex - 1]
+                                            localPlayers[newIndex - 1] = temp
+                                            newIndex -= 1
+                                            dragOffset += effectiveHeight
+                                        }
+                                        draggedItemIndex = newIndex
                                     }
-                                    while (dragOffset < -threshold && newIndex > 0) {
-                                        val temp = localPlayers[newIndex]
-                                        localPlayers[newIndex] = localPlayers[newIndex - 1]
-                                        localPlayers[newIndex - 1] = temp
-                                        newIndex -= 1
-                                        dragOffset += effectiveHeight
-                                    }
-                                    draggedItemIndex = newIndex
                                 }
                             }
                         )
@@ -476,7 +481,7 @@ fun ReorderablePlayerColumn(
                         .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
                         .offset { IntOffset(0, yOffset.roundToInt()) }
                         .zIndex(if (isDragging) 1f else 0f)
-                        .scale(if (isDragging) 1.2f else 1f)
+                        .scale(if (isDragging) 1.05f else 1f)
                 ) {
                     itemContent(player, index, isDragging, dragModifier)
                 }
@@ -1152,7 +1157,7 @@ private fun LobbyScreen(
             Text("玩家列表", fontWeight = FontWeight.Bold)
             if (state.mode == TableMode.HOST) {
                 Spacer(Modifier.weight(1f))
-                Text("拖拽调整顺序 / 左滑移除非房主玩家", fontSize = 11.sp, color = Color.Gray)
+                Text("长按拖拽调整顺序 / 左滑移除非房主", fontSize = 11.sp, color = Color.Gray)
             }
         }
 
