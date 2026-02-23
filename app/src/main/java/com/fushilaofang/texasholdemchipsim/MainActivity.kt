@@ -66,6 +66,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.gestures.scrollBy
 import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -388,6 +389,7 @@ fun ReorderablePlayerColumn(
     onMovePlayer: (String, Int) -> Unit,
     canReorder: Boolean,
     modifier: Modifier = Modifier,
+    scrollState: androidx.compose.foundation.ScrollState? = null,
     itemContent: @Composable (player: PlayerState, index: Int, isDragging: Boolean, dragModifier: Modifier) -> Unit
 ) {
     val localPlayers = remember { mutableStateListOf<PlayerState>() }
@@ -396,7 +398,47 @@ fun ReorderablePlayerColumn(
     var itemHeightPx by remember { mutableFloatStateOf(0f) }
     var initialDraggedIndex by remember { mutableStateOf<Int?>(null) }
     var draggedPlayerId by remember { mutableStateOf<String?>(null) }
+    var overscrollTarget by remember { mutableFloatStateOf(0f) }
     val spacingPx = with(LocalDensity.current) { 8.dp.toPx() }
+
+    val checkSwaps = {
+        val di = draggedItemIndex
+        val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+        if (di != null) {
+            var newIndex = di
+            val threshold = effectiveHeight * 0.5f
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
+                    val temp = localPlayers[newIndex]
+                    localPlayers[newIndex] = localPlayers[newIndex + 1]
+                    localPlayers[newIndex + 1] = temp
+                    newIndex += 1
+                    dragOffset -= effectiveHeight
+                }
+                while (dragOffset < -threshold && newIndex > 0) {
+                    val temp = localPlayers[newIndex]
+                    localPlayers[newIndex] = localPlayers[newIndex - 1]
+                    localPlayers[newIndex - 1] = temp
+                    newIndex -= 1
+                    dragOffset += effectiveHeight
+                }
+                draggedItemIndex = newIndex
+            }
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(overscrollTarget, draggedItemIndex) {
+        if (draggedItemIndex != null && overscrollTarget != 0f && scrollState != null) {
+            while (true) {
+                val scrolled = scrollState.scrollBy(overscrollTarget * 15f)
+                if (scrolled != 0f) {
+                    dragOffset += scrolled
+                    checkSwaps()
+                }
+                kotlinx.coroutines.delay(16)
+            }
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(players) {
         if (draggedItemIndex == null) {
@@ -424,6 +466,7 @@ fun ReorderablePlayerColumn(
                                 }
                             },
                             onDragEnd = {
+                                overscrollTarget = 0f
                                 val id = draggedPlayerId
                                 val finalIdx = draggedItemIndex
                                 val initIdx = initialDraggedIndex
@@ -438,6 +481,7 @@ fun ReorderablePlayerColumn(
                                 }
                             },
                             onDragCancel = {
+                                overscrollTarget = 0f
                                 draggedItemIndex = null
                                 dragOffset = 0f
                                 draggedPlayerId = null
@@ -448,29 +492,21 @@ fun ReorderablePlayerColumn(
                                 if (draggedPlayerId == player.id) {
                                     change.consume()
                                     dragOffset += dragAmount.y
+                                    checkSwaps()
 
-                                    val di = draggedItemIndex
-                                    val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+                                    if (scrollState != null && initialDraggedIndex != null) {
+                                        val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+                                        val contentHeight = localPlayers.size * effectiveHeight
+                                        val viewportHeight = contentHeight - scrollState.maxValue
+                                        val viewportY = (initialDraggedIndex!! * effectiveHeight) + dragOffset + change.position.y - scrollState.value
 
-                                    if (di != null) {
-                                        var newIndex = di
-                                        val threshold = effectiveHeight * 0.5f
-                                        androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
-                                            while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
-                                                val temp = localPlayers[newIndex]
-                                                localPlayers[newIndex] = localPlayers[newIndex + 1]
-                                                localPlayers[newIndex + 1] = temp
-                                                newIndex += 1
-                                                dragOffset -= effectiveHeight
-                                            }
-                                            while (dragOffset < -threshold && newIndex > 0) {
-                                                val temp = localPlayers[newIndex]
-                                                localPlayers[newIndex] = localPlayers[newIndex - 1]
-                                                localPlayers[newIndex - 1] = temp
-                                                newIndex -= 1
-                                                dragOffset += effectiveHeight
-                                            }
-                                            draggedItemIndex = newIndex
+                                        val edge = 150f
+                                        if (viewportY < edge && scrollState.value > 0) {
+                                            overscrollTarget = -1f
+                                        } else if (viewportY > viewportHeight - edge && scrollState.value < scrollState.maxValue) {
+                                            overscrollTarget = 1f
+                                        } else {
+                                            overscrollTarget = 0f
                                         }
                                     }
                                 }
@@ -1167,11 +1203,13 @@ private fun LobbyScreen(
             }
         }
 
+        val listScrollState = rememberScrollState()
         ReorderablePlayerColumn(
             players = sortedPlayers,
             onMovePlayer = onMovePlayer,
             canReorder = state.mode == TableMode.HOST && sortedPlayers.size > 1,
-            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())
+            modifier = Modifier.weight(1f).verticalScroll(listScrollState),
+            scrollState = listScrollState
         ) { player, seatIdx, isDragging, dragModifier ->
             val isMe = player.id == state.selfId
             val isOffline = state.disconnectedPlayerIds.contains(player.id)
@@ -1555,11 +1593,13 @@ private fun GameScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("长按拖拽调整顺序", fontSize = 12.sp, color = Color.Gray)
                     val reorderPlayers = state.players.sortedBy { it.seatOrder }
+                    val listScrollState = rememberScrollState()
                     ReorderablePlayerColumn(
                         players = reorderPlayers,
                         onMovePlayer = onMovePlayer,
                         canReorder = true,
-                        modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                        modifier = Modifier.weight(1f, fill = false).verticalScroll(listScrollState),
+                        scrollState = listScrollState
                     ) { player, seatIdx, isDragging, dragModifier ->
                         val isDealer = seatIdx == state.blindsState.dealerIndex
                         Row(
