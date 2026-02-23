@@ -331,9 +331,14 @@ fun SwipeablePlayerRow(
         ) {
             androidx.compose.foundation.layout.Box(
                 modifier = Modifier
+                    .padding(top = 1.dp, bottom = 1.dp)
                     .fillMaxHeight()
                     .width(70.dp)
-                    .background(Color(0xFFF57C00), shape = if (onKick == null) androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp) else androidx.compose.ui.graphics.RectangleShape)
+                    .background(
+                        Color(0xFFF57C00), 
+                        shape = if (onKick == null) androidx.compose.foundation.shape.RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp, topEnd = 12.dp, bottomEnd = 12.dp) 
+                                else androidx.compose.foundation.shape.RoundedCornerShape(topStart = 12.dp, bottomStart = 12.dp)
+                    )
                     .clickable {
                         onSetDealer()
                         scope.launch { offsetX.animateTo(0f) }
@@ -345,6 +350,7 @@ fun SwipeablePlayerRow(
             if (onKick != null) {
                 androidx.compose.foundation.layout.Box(
                     modifier = Modifier
+                        .padding(top = 1.dp, bottom = 1.dp, end = 1.dp)
                         .fillMaxHeight()
                         .width(70.dp)
                         .background(Color(0xFFE53935), shape = androidx.compose.foundation.shape.RoundedCornerShape(topEnd = 12.dp, bottomEnd = 12.dp))
