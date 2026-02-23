@@ -64,6 +64,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -414,78 +415,79 @@ fun ReorderablePlayerColumn(
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         localPlayers.forEachIndexed { index, player ->
-            val isDragging = draggedItemIndex == index
-            val dragModifier = if (canReorder) {
-                Modifier.pointerInput(player.id) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = {
-                            draggedItemIndex = index
-                            initialDraggedIndex = index
-                            draggedPlayerId = player.id
-                            dragOffset = 0f
-                        },
-                        onDragEnd = {
-                            val id = draggedPlayerId
-                            val finalIdx = draggedItemIndex
-                            val initIdx = initialDraggedIndex
-                            draggedItemIndex = null
-                            dragOffset = 0f
-                            draggedPlayerId = null
-                            if (id != null && finalIdx != null && initIdx != null && initIdx != finalIdx) {
-                                onMovePlayer(id, finalIdx)
-                            } else {
+            androidx.compose.runtime.key(player.id) {
+                val isDragging = draggedItemIndex == index
+                val dragModifier = if (canReorder) {
+                    Modifier.pointerInput(player.id) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                draggedItemIndex = index
+                                initialDraggedIndex = index
+                                draggedPlayerId = player.id
+                                dragOffset = 0f
+                            },
+                            onDragEnd = {
+                                val id = draggedPlayerId
+                                val finalIdx = draggedItemIndex
+                                val initIdx = initialDraggedIndex
+                                draggedItemIndex = null
+                                dragOffset = 0f
+                                draggedPlayerId = null
+                                if (id != null && finalIdx != null && initIdx != null && initIdx != finalIdx) {
+                                    onMovePlayer(id, finalIdx)
+                                } else {
+                                    localPlayers.clear()
+                                    localPlayers.addAll(players)
+                                }
+                            },
+                            onDragCancel = {
+                                draggedItemIndex = null
+                                dragOffset = 0f
+                                draggedPlayerId = null
                                 localPlayers.clear()
                                 localPlayers.addAll(players)
-                            }
-                        },
-                        onDragCancel = {
-                            draggedItemIndex = null
-                            dragOffset = 0f
-                            draggedPlayerId = null
-                            localPlayers.clear()
-                            localPlayers.addAll(players)
-                        },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            dragOffset += dragAmount.y
+                            },
+                            onVerticalDrag = { change: androidx.compose.ui.input.pointer.PointerInputChange, dragAmount: Float ->
+                                dragOffset += dragAmount
 
-                            val di = draggedItemIndex
-                            val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
+                                val di = draggedItemIndex
+                                val effectiveHeight = if (itemHeightPx > 0) itemHeightPx + spacingPx else 150f
 
-                            if (di != null) {
-                                var newIndex = di
-                                val threshold = effectiveHeight * 0.5f
-                                while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
-                                    val temp = localPlayers[newIndex]
-                                    localPlayers[newIndex] = localPlayers[newIndex + 1]
-                                    localPlayers[newIndex + 1] = temp
-                                    newIndex += 1
-                                    dragOffset -= effectiveHeight
+                                if (di != null) {
+                                    var newIndex = di
+                                    val threshold = effectiveHeight * 0.5f
+                                    while (dragOffset > threshold && newIndex < localPlayers.size - 1) {
+                                        val temp = localPlayers[newIndex]
+                                        localPlayers[newIndex] = localPlayers[newIndex + 1]
+                                        localPlayers[newIndex + 1] = temp
+                                        newIndex += 1
+                                        dragOffset -= effectiveHeight
+                                    }
+                                    while (dragOffset < -threshold && newIndex > 0) {
+                                        val temp = localPlayers[newIndex]
+                                        localPlayers[newIndex] = localPlayers[newIndex - 1]
+                                        localPlayers[newIndex - 1] = temp
+                                        newIndex -= 1
+                                        dragOffset += effectiveHeight
+                                    }
+                                    draggedItemIndex = newIndex
                                 }
-                                while (dragOffset < -threshold && newIndex > 0) {
-                                    val temp = localPlayers[newIndex]
-                                    localPlayers[newIndex] = localPlayers[newIndex - 1]
-                                    localPlayers[newIndex - 1] = temp
-                                    newIndex -= 1
-                                    dragOffset += effectiveHeight
-                                }
-                                draggedItemIndex = newIndex
                             }
-                        }
-                    )
+                        )
+                    }
+                } else Modifier
+
+                val yOffset = if (isDragging) dragOffset else 0f
+
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
+                        .offset { IntOffset(0, yOffset.roundToInt()) }
+                        .zIndex(if (isDragging) 1f else 0f)
+                ) {
+                    itemContent(player, index, isDragging, dragModifier)
                 }
-            } else Modifier
-
-            val yOffset = if (isDragging) dragOffset else 0f
-
-            androidx.compose.foundation.layout.Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .onGloballyPositioned { if (itemHeightPx == 0f) itemHeightPx = it.size.height.toFloat() }
-                    .offset { IntOffset(0, yOffset.roundToInt()) }
-                    .zIndex(if (isDragging) 1f else 0f)
-            ) {
-                itemContent(player, index, isDragging, dragModifier)
             }
         }
     }
