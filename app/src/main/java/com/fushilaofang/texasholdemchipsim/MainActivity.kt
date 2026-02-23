@@ -79,6 +79,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.layout.offset
@@ -1230,6 +1231,9 @@ private fun LobbyScreen(
         }
 
         val listScrollState = rememberScrollState()
+        // key 以玩家 ID 列表为键：当玩家被增删时，Compose 强制重建内部组件，
+        // 彻底重置 localPlayers/previousPlayers 等内部状态，避免残留卡片问题。
+        key(sortedPlayers.map { it.id }) {
         ReorderablePlayerColumn(
             players = sortedPlayers,
             onMovePlayer = onMovePlayer,
@@ -1304,6 +1308,7 @@ private fun LobbyScreen(
                 }
             }
         }
+        }  // end key(sortedPlayers.map { it.id })
 
         // 底部操作按钮
         if (state.mode == TableMode.HOST) {

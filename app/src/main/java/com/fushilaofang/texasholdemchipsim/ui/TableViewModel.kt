@@ -1586,7 +1586,10 @@ class TableViewModel(
             is LanTableServer.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableServer.Event.PlayerDisconnected -> {
-                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name ?: "?"
+                // 若玩家已不在列表（被 kickPlayer 移除后断连），跳过掉线事件，
+                // 避免触发额外重组并向 disconnectedPlayerIds 写入脏数据。
+                val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name
+                    ?: return@handleServerEvent
                 _uiState.update { state ->
                     state.copy(
                         disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
