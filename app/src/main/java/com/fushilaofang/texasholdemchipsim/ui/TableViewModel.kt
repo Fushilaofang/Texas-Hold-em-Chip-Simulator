@@ -1811,6 +1811,14 @@ class TableViewModel(
             is LanTableClient.Event.Error ->
                 _uiState.update { it.copy(info = event.message) }
             is LanTableClient.Event.Disconnected -> {
+                // 如果是客户端在大厅阶段掉线，由于服务端也会直接清理掉线玩家，不留重连位，
+                // 此时客户端就不应该尝试断线重连了，必须强制返回主页终止重连循环。
+                if (!_uiState.value.gameStarted) {
+                    goHome()
+                    _uiState.update { it.copy(info = "连接断开，已被移出大厅") }
+                    return@handleClientEvent
+                }
+
                 if (event.willReconnect) {
                     _uiState.update { it.copy(waitingForHostReconnect = true, info = "连接断开，正在尝试重连...") }
                 } else {
@@ -1900,6 +1908,11 @@ class TableViewModel(
         val modeStr = prefs.getString("session_mode", null) ?: return
         val mode = try { TableMode.valueOf(modeStr) } catch (_: Exception) { return }
         if (mode == TableMode.IDLE) return
+        
+        val gameStarted = prefs.getBoolean("session_game_started", false)
+        // 非房主玩家在游戏未开始的大厅阶段，不保留重连状态（因为服务端也会将其直接移除）
+        if (mode == TableMode.CLIENT && !gameStarted) return
+        
         val tableName = prefs.getString("session_table_name", "") ?: ""
         _uiState.update { it.copy(canRejoin = true, lastSessionTableName = tableName, lastSessionMode = mode) }
     }
