@@ -24,7 +24,7 @@ import kotlinx.serialization.json.Json
 
 private const val DEFAULT_PORT = 45454
 private const val HEARTBEAT_INTERVAL_MS = 3_000L   // 每 3 秒发一次 ping
-private const val HEARTBEAT_TIMEOUT_MS = 60_000L    // 60 秒无 pong 才视为掉线
+private const val HEARTBEAT_TIMEOUT_MS = 10_000L    // 10 秒无 pong 才视为掉线
 
 class LanTableServer(
     private val json: Json = Json {
@@ -134,6 +134,8 @@ class LanTableServer(
                 serverSocket = ss
                 while (isActive) {
                     val socket = serverSocket?.accept() ?: break
+                    // 同样地为服务端每个客户端连接设置 15 秒超时
+                    runCatching { socket.soTimeout = 15000 }
                     launch {
                         handleClient(
                             socket = socket,
@@ -986,8 +988,11 @@ class LanTableClient(
         listenJob = scope.launch {
             try {
                 val newSocket = Socket(hostIp, DEFAULT_PORT)
-                // 启用 TCP keepalive，让 OS 维护连接状态
-                runCatching { newSocket.keepAlive = true }
+                // 启用 TCP keepalive，设置读取超时让断网尽早抛出异常
+                runCatching { 
+                    newSocket.keepAlive = true
+                    newSocket.soTimeout = 15000 
+                }
                 socket = newSocket
                 val reader = BufferedReader(InputStreamReader(newSocket.getInputStream()))
                 val w = BufferedWriter(OutputStreamWriter(newSocket.getOutputStream()))
