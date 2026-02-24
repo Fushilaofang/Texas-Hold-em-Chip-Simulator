@@ -264,9 +264,16 @@ class TableViewModel(
         server.stop()
         client.stopObserving()
         client.disconnect()
+        
+        // 若在游戏未开始且身处大厅时退出，认为是彻底离开
+        val isLobbyClient = prevMode == TableMode.CLIENT && !_uiState.value.gameStarted
+        if (isLobbyClient && prevSelfId.isNotBlank()) {
+            client.sendPlayerLeft(prevSelfId)
+        }
+
         // 只有实际以玩家身份加入过（selfId 不为空）才允许重连；
-        // 纯观察者/审批中返回大厅的情况 selfId 为空，不应显示重新加入按钮
-        val canRejoin = prevMode != TableMode.IDLE && prevSelfId.isNotBlank()
+        // 纯观察者/审批中返回大厅，或者在大厅直接主动退出的情况，不应显示重新加入按钮
+        val canRejoin = prevMode != TableMode.IDLE && prevSelfId.isNotBlank() && !isLobbyClient
         _uiState.update {
             it.copy(
                 mode = TableMode.IDLE,
@@ -1646,6 +1653,27 @@ class TableViewModel(
             }
             is LanTableServer.Event.FoldReceived -> {
                 processFold(event.playerId)
+            }
+            is LanTableServer.Event.PlayerLeft -> {
+                val player = _uiState.value.players.firstOrNull { it.id == event.playerId } ?: return@handleServerEvent
+                val wasCurrentTurn = _uiState.value.gameStarted && _uiState.value.currentTurnPlayerId == event.playerId
+                _uiState.update { s ->
+                    s.copy(
+                        players = s.players.filter { it.id != event.playerId },
+                        midGameWaitingPlayerIds = s.midGameWaitingPlayerIds - event.playerId,
+                        foldedPlayerIds = s.foldedPlayerIds - event.playerId,
+                        disconnectedPlayerIds = s.disconnectedPlayerIds - event.playerId,
+                        actedPlayerIds = s.actedPlayerIds - event.playerId,
+                        roundContributions = s.roundContributions - event.playerId,
+                        info = "${player.name} 已退出房间"
+                    )
+                }
+                server.removePlayer(event.playerId)
+                if (wasCurrentTurn) {
+                    advanceTurnOrRound()
+                } else {
+                    syncToClients()
+                }
             }
             is LanTableServer.Event.ProfileUpdateReceived -> {
                 _uiState.update { state ->

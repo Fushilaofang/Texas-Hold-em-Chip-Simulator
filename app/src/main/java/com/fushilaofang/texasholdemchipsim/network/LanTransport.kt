@@ -88,6 +88,8 @@ class LanTableServer(
         data class MidGameJoinRequested(val requestId: String, val playerName: String, val buyIn: Int, val deviceId: String, val avatarBase64: String) : Event()
         /** 中途加入的玩家主动取消了申请或已批准的等待 */
         data class MidGameJoinCancelled(val requestId: String, val assignedPlayerId: String?, val reason: String = "取消了申请") : Event()
+        /** 客户端主动离开房间 */
+        data class PlayerLeft(val playerId: String) : Event()
         data class Error(val message: String) : Event()
     }
 
@@ -392,6 +394,16 @@ class LanTableServer(
         }
     }
 
+    /** 彻底清理已主动离开的玩家的连接状态（不需经过Kicked流程） */
+    fun removePlayer(playerId: String) {
+        val conn = synchronized(clientsLock) { clients.remove(playerId) }
+        synchronized(disconnectedLock) { disconnectedPlayers.remove(playerId) }
+        if (conn != null) {
+            conn.readerJob.cancel()
+            runCatching { conn.socket.close() }
+        }
+    }
+
     fun close() {
         stop()
         scope.cancel()
@@ -543,6 +555,10 @@ class LanTableServer(
 
                         is NetworkMessage.UpdateProfile -> {
                             onEvent(Event.ProfileUpdateReceived(msg.playerId, msg.newName, msg.avatarBase64))
+                        }
+
+                        is NetworkMessage.PlayerLeft -> {
+                            onEvent(Event.PlayerLeft(msg.playerId))
                         }
 
                         is NetworkMessage.Reconnect -> {
@@ -1230,6 +1246,18 @@ class LanTableClient(
             try {
                 val w = writer ?: return@launch
                 val msg = NetworkMessage.UpdateProfile(playerId = playerId, newName = newName, avatarBase64 = avatarBase64)
+                w.write(json.encodeToString(NetworkMessage.serializer(), msg))
+                w.newLine()
+                w.flush()
+            } catch (_: Exception) { }
+        }
+    }
+
+    fun sendPlayerLeft(playerId: String) {
+        scope.launch {
+            try {
+                val w = writer ?: return@launch
+                val msg = NetworkMessage.PlayerLeft(playerId = playerId)
                 w.write(json.encodeToString(NetworkMessage.serializer(), msg))
                 w.newLine()
                 w.flush()

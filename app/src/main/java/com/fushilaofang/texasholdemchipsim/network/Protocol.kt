@@ -175,4 +175,9 @@ sealed class NetworkMessage {
         val reason: String = "",
         val blocked: Boolean = false
     ) : NetworkMessage()
+
+    /** 客户端主动离开房间（通知服务端彻底移除该玩家） */
+    @Serializable
+    @SerialName("player_left")
+    data class PlayerLeft(val playerId: String) : NetworkMessage()
 }
