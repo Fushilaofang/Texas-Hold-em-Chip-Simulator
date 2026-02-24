@@ -1597,6 +1597,21 @@ class TableViewModel(
                 // 避免触发额外重组并向 disconnectedPlayerIds 写入脏数据。
                 val pName = _uiState.value.players.firstOrNull { it.id == event.playerId }?.name
                     ?: return@handleServerEvent
+
+                // 如果游戏还未开始（处于大厅状态），任何人断连或退出，直接清理出房间，不留“掉线”占位
+                if (!_uiState.value.gameStarted) {
+                    _uiState.update { s ->
+                        s.copy(
+                            players = s.players.filter { it.id != event.playerId },
+                            disconnectedPlayerIds = s.disconnectedPlayerIds - event.playerId,
+                            info = "$pName 已退出房间"
+                        )
+                    }
+                    server.removePlayer(event.playerId)
+                    syncToClients()
+                    return@handleServerEvent
+                }
+
                 _uiState.update { state ->
                     state.copy(
                         disconnectedPlayerIds = state.disconnectedPlayerIds + event.playerId,
