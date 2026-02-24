@@ -1618,6 +1618,7 @@ class TableViewModel(
                         info = "$pName 掉线，等待重连..."
                     )
                 }
+                syncToClients()
             }
             is LanTableServer.Event.PlayerReconnected -> {
                 _uiState.update { state ->
