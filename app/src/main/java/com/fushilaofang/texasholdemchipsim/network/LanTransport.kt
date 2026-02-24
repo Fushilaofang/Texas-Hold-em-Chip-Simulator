@@ -847,8 +847,16 @@ class LanTableServer(
                         else -> Unit
                     }
                 }
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                // 忽略协程取消异常（如被踢出等关闭连接引发）
             } catch (ex: Exception) {
-                onEvent(Event.Error("客户端处理失败: ${ex.message ?: "未知错误"}"))
+                val msg = ex.message ?: "未知错误"
+                // 忽略网络断开引起的常规异常，不将其显示到大厅状态栏
+                if (!msg.contains("Connection reset", ignoreCase = true) && 
+                    !msg.contains("Socket closed", ignoreCase = true) &&
+                    !msg.contains("Software caused connection abort", ignoreCase = true)) {
+                    onEvent(Event.Error("客户端处理失败: $msg"))
+                }
             } finally {
                 approvalWatchJob?.cancel()
                 // 观察者断开时从列表中移除
