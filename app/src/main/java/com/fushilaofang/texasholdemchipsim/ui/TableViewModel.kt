@@ -120,7 +120,10 @@ data class TableUiState(
     // --- 被房主移除 ---
     /** 是否被房主移除（展示被移除弹窗） */
     val wasKicked: Boolean = false,
-    val kickReason: String = ""
+    val kickReason: String = "",
+    // --- 房主网络断开 ---
+    val hostNetworkDisconnected: Boolean = false,
+    val hostDisconnectReason: String = ""
 )
 
 class TableViewModel(
@@ -600,6 +603,11 @@ class TableViewModel(
     /** 客户端确认关闭被移除弹窗 */
     fun clearKickedState() {
         _uiState.update { it.copy(wasKicked = false, kickReason = "") }
+    }
+
+    /** 房主确认并关闭网络断开提示弹窗 */
+    fun clearHostNetworkDisconnectedState() {
+        _uiState.update { it.copy(hostNetworkDisconnected = false, hostDisconnectReason = "") }
     }
 
     /** 客户端主动取消中途加入申请（等待审批或已批准等待下一手） */
@@ -1626,7 +1634,13 @@ class TableViewModel(
                     goHome()
                     _uiState.update { it.copy(info = "网络已断开，房间已解散") }
                 } else {
-                    _uiState.update { it.copy(info = event.reason) }
+                    _uiState.update { 
+                        it.copy(
+                            info = event.reason,
+                            hostNetworkDisconnected = true,
+                            hostDisconnectReason = event.reason
+                        ) 
+                    }
                 }
             }
             is LanTableServer.Event.PlayerReconnected -> {

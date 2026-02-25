@@ -304,6 +304,18 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 }
+
+                // 房主网络断开弹窗
+                if (state.hostNetworkDisconnected) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { /* 必须点按确认按钮 */ },
+                        title = { Text("网络异常", fontWeight = FontWeight.Bold, color = Color(0xFFE53935)) },
+                        text = { Text(state.hostDisconnectReason.ifBlank { "网络连接已断开，请检查您的网络设置" }) },
+                        confirmButton = {
+                            Button(onClick = { vm.clearHostNetworkDisconnectedState() }) { Text("我知道了") }
+                        }
+                    )
+                }
             }
         }
     }

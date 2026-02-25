@@ -2,3 +2,6 @@
 # Android SDK (auto-generated, do not commit)
 android-sdk/
 local.properties
+
+.agent
+
