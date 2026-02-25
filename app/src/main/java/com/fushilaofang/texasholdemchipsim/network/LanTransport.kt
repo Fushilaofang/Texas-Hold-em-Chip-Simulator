@@ -91,6 +91,7 @@ class LanTableServer(
         /** 客户端主动离开房间 */
         data class PlayerLeft(val playerId: String) : Event()
         data class Error(val message: String) : Event()
+        data class ServerClosed(val reason: String) : Event()
     }
 
     data class ClientConnection(
@@ -161,7 +162,12 @@ class LanTableServer(
                     }
                 }
             } catch (ex: Exception) {
-                onEvent(Event.Error("服务端异常: ${ex.message ?: "未知错误"}"))
+                if (isActive) {
+                    val msg = ex.message ?: "未知错误"
+                    if (!msg.contains("socket closed", ignoreCase = true)) {
+                        onEvent(Event.ServerClosed("服务端网络已断开"))
+                    }
+                }
             }
         }
 

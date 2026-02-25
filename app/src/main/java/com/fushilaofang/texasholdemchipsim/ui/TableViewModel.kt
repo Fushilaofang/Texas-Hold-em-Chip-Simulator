@@ -1620,6 +1620,15 @@ class TableViewModel(
                 }
                 syncToClients()
             }
+            is LanTableServer.Event.ServerClosed -> {
+                if (!_uiState.value.gameStarted) {
+                    _uiState.update { it.copy(selfId = "") }
+                    goHome()
+                    _uiState.update { it.copy(info = "网络已断开，房间已解散") }
+                } else {
+                    _uiState.update { it.copy(info = event.reason) }
+                }
+            }
             is LanTableServer.Event.PlayerReconnected -> {
                 _uiState.update { state ->
                     val newName = event.updatedName.ifBlank {
@@ -1816,7 +1825,7 @@ class TableViewModel(
                 // 此时客户端就不应该尝试断线重连了，必须强制返回主页终止重连循环。
                 if (!_uiState.value.gameStarted) {
                     goHome()
-                    _uiState.update { it.copy(info = "连接断开，已被移出大厅") }
+                    _uiState.update { it.copy(info = "与房主的网络连接已断开") }
                     return@handleClientEvent
                 }
 
