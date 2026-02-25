@@ -122,9 +122,10 @@ class LanTableServer(
         allowMidGameJoinProvider: () -> Boolean = { false },
         midGameWaitingPlayerIdsProvider: () -> Set<String> = { emptySet() },
         onPlayerJoined: (PlayerState) -> Unit,
-        onEvent: (Event) -> Unit
+        onEvent: (Event) -> Unit,
+        keepDisconnectedPlayers: Boolean = false
     ) {
-        stop()
+        stop(keepDisconnectedPlayers)
 
         // 接受新连接
         scope.launch {
@@ -337,12 +338,16 @@ class LanTableServer(
         }
     }
 
-    fun stop() {
+    fun stop(keepDisconnectedPlayers: Boolean = false) {
         heartbeatJob?.cancel()
         heartbeatJob = null
-        synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        if (!keepDisconnectedPlayers) {
+            synchronized(disconnectedLock) { disconnectedPlayers.clear() }
+        }
         // 新建房间时重置屏蔽列表，被屏蔽的玩家可以加入新房间
-        synchronized(blockedLock) { blockedDeviceIds.clear() }
+        if (!keepDisconnectedPlayers) {
+            synchronized(blockedLock) { blockedDeviceIds.clear() }
+        }
         // 拒绝所有正在等待审批的中途加入申请
         val snapshot = synchronized(pendingMidJoinsLock) { pendingMidJoins.toMap().also { pendingMidJoins.clear() } }
         snapshot.values.forEach { p ->

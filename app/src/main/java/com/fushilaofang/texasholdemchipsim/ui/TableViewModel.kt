@@ -2,6 +2,10 @@ package com.fushilaofang.texasholdemchipsim.ui
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.PowerManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -24,6 +28,8 @@ import com.fushilaofang.texasholdemchipsim.settlement.SidePotCalculator
 import com.fushilaofang.texasholdemchipsim.util.DeviceIdManager
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -157,6 +163,62 @@ class TableViewModel(
         try { if (wakeLock?.isHeld == true) wakeLock.release() } catch (_: Exception) {}
     }
 
+    // ==================== 网络连通性监控 ====================
+    private val connectivityManager =
+        context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private var networkRestartJob: Job? = null
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onLost(network: Network) {
+            // 网络丢失
+            val state = _uiState.value
+            if (state.mode != TableMode.HOST) return
+            if (!state.gameStarted) {
+                // 大厅阶段断网 → 直接回首页
+                _uiState.update { it.copy(selfId = "") }
+                goHome()
+                _uiState.update { it.copy(info = "网络已断开，房间已解散") }
+            } else {
+                // 游戏中断网 → 弹窗提示，标记所有客户端为掉线
+                _uiState.update {
+                    it.copy(
+                        hostNetworkDisconnected = true,
+                        hostDisconnectReason = "网络连接已断开，正在等待网络恢复后自动重新开放房间...",
+                        info = "网络已断开，等待恢复..."
+                    )
+                }
+            }
+        }
+
+        override fun onAvailable(network: Network) {
+            // 网络恢复
+            val state = _uiState.value
+            if (state.mode != TableMode.HOST || !state.gameStarted) return
+            // 延迟一小段时间等网络就绪后再重启服务端
+            networkRestartJob?.cancel()
+            networkRestartJob = viewModelScope.launch(Dispatchers.IO) {
+                delay(1500)
+                // 将所有非房主玩家标记为掉线（因为网络断开期间所有连接都已丢失）
+                val selfId = _uiState.value.selfId
+                val allDisconnected = _uiState.value.players
+                    .filter { it.id != selfId }
+                    .map { it.id }
+                    .toSet()
+                _uiState.update { it.copy(disconnectedPlayerIds = allDisconnected) }
+                // 重启服务端 Socket，保留掉线玩家列表，让客户端可以重连
+                startServer(keepDisconnectedPlayers = true)
+                startAdvertiser()
+                _uiState.update {
+                    it.copy(
+                        hostNetworkDisconnected = false,
+                        hostDisconnectReason = "",
+                        info = "网络已恢复，房间已重新开放，等待玩家重连..."
+                    )
+                }
+            }
+        }
+    }
+
     private val _uiState = MutableStateFlow(
         TableUiState(
             savedPlayerName = prefs.getString("player_name", "") ?: "",
@@ -171,6 +233,15 @@ class TableViewModel(
 
     init {
         loadSessionInfo()
+        // 注册网络状态监听
+        val networkRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .build()
+        try {
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+        } catch (_: Exception) { /* 某些设备可能不支持 */ }
     }
 
     // ==================== 用户设置持久化 ====================
@@ -1551,7 +1622,7 @@ class TableViewModel(
     // ==================== 提取的服务端/客户端事件处理 ====================
 
     /** 启动 TCP 服务端 */
-    private fun startServer() {
+    private fun startServer(keepDisconnectedPlayers: Boolean = false) {
         acquireWakeLock()
         server.start(
             hostPlayersProvider = { _uiState.value.players },
@@ -1579,7 +1650,8 @@ class TableViewModel(
                 syncToClients()
                 saveSession()
             },
-            onEvent = ::handleServerEvent
+            onEvent = ::handleServerEvent,
+            keepDisconnectedPlayers = keepDisconnectedPlayers
         )
     }
 
@@ -2087,6 +2159,8 @@ class TableViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        networkRestartJob?.cancel()
+        try { connectivityManager.unregisterNetworkCallback(networkCallback) } catch (_: Exception) {}
         releaseWakeLock()
         roomAdvertiser.close()
         roomScanner.close()
